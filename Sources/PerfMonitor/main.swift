@@ -24,6 +24,13 @@ struct PerfMonitorApp: App {
         }
         .defaultSize(width: 1320, height: 900)
 
+        WindowGroup("进程详情", for: InspectorTarget.self) { $target in
+            if let target {
+                ProcessInspector(target: target).environment(delegate.monitor)
+            }
+        }
+        .defaultSize(width: 600, height: 560)
+
         MenuBarExtra {
             MenuBarView().environment(delegate.monitor)
         } label: {

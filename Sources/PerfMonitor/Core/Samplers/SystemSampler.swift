@@ -31,6 +31,7 @@ final class SystemSampler {
 
     struct Result {
         var cpuTotal = 0.0          // 0...1 over all cores
+        var cpuUser = 0.0, cpuSystem = 0.0
         var memory = Memory()
         var thermal = ThermalPressure.nominal
         var gpuUtil: Double?        // 0...1
@@ -55,7 +56,7 @@ final class SystemSampler {
         defer { prevTime = now }
 
         var r = Result()
-        r.cpuTotal = cpuLoad()
+        (r.cpuTotal, r.cpuUser, r.cpuSystem) = cpuLoad()
         r.memory = memory(dt: dt)
         var state: UInt64 = 0
         notify_get_state(thermalToken, &state)
@@ -74,28 +75,31 @@ final class SystemSampler {
 
     // MARK: - CPU
 
-    private func cpuLoad() -> Double {
+    private func cpuLoad() -> (Double, Double, Double) {
         var count: natural_t = 0
         var info: processor_info_array_t?
         var infoCount: mach_msg_type_number_t = 0
         guard host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO, &count, &info, &infoCount) == KERN_SUCCESS,
-              let info else { return 0 }
+              let info else { return (0, 0, 0) }
         defer { vm_deallocate(mach_task_self_, vm_address_t(bitPattern: info), vm_size_t(infoCount) * vm_size_t(MemoryLayout<integer_t>.stride)) }
 
         let ticks = (0..<Int(infoCount)).map { UInt32(bitPattern: info[$0]) }
         defer { prevTicks = ticks }
-        guard prevTicks.count == ticks.count else { return 0 }
+        guard prevTicks.count == ticks.count else { return (0, 0, 0) }
 
-        var busy: UInt64 = 0, total: UInt64 = 0
+        var busy: UInt64 = 0, total: UInt64 = 0, user: UInt64 = 0, system: UInt64 = 0
         for core in 0..<Int(count) {
             let base = core * Int(CPU_STATE_MAX)
             for s in 0..<Int(CPU_STATE_MAX) {
                 let d = UInt64(ticks[base + s] &- prevTicks[base + s])
                 total += d
                 if s != Int(CPU_STATE_IDLE) { busy += d }
+                if s == Int(CPU_STATE_USER) || s == Int(CPU_STATE_NICE) { user += d }
+                if s == Int(CPU_STATE_SYSTEM) { system += d }
             }
         }
-        return total > 0 ? Double(busy) / Double(total) : 0
+        guard total > 0 else { return (0, 0, 0) }
+        return (Double(busy) / Double(total), Double(user) / Double(total), Double(system) / Double(total))
     }
 
     // MARK: - Memory

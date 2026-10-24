@@ -47,6 +47,13 @@ struct StatusReport: Codable {
     struct Proc: Codable {
         var name: String
         var pids: [Int32]
+        var user: String
+        var ppid: Int32
+        var threads: Int
+        var translated: Bool
+        var gpuPct: Double?
+        var idleWakeupsPerSec: Double?
+        var preventingSleep: Bool
         var cpuPct: Double
         var powerW: Double?
         var powerEstimated: Bool
@@ -125,10 +132,13 @@ struct StatusReport: Codable {
         case "power": { $0.powerW ?? 0 }
         case "memory": { $0.memory }
         case "disk": { $0.diskBps }
+        case "gpu": { $0.gpu ?? 0 }
+        case "threads": { Double($0.threads) }
         default: { $0.cpu }
         }
         return list.sorted { key($0) > key($1) }.prefix(max(1, limit)).map {
-            Proc(name: $0.name, pids: $0.pids, cpuPct: $0.cpu, powerW: $0.powerW, powerEstimated: $0.powerEstimated,
+            Proc(name: $0.name, pids: $0.pids, user: $0.user, ppid: $0.ppid, threads: $0.threads, translated: $0.translated,
+                 gpuPct: $0.gpu, idleWakeupsPerSec: $0.idleWakeups, preventingSleep: $0.preventingSleep, cpuPct: $0.cpu, powerW: $0.powerW, powerEstimated: $0.powerEstimated,
                  memoryBytes: $0.memory, diskBps: $0.diskBps)
         }
     }

@@ -44,7 +44,7 @@ enum APIRouter {
     static let port: UInt16 = 47823
     static let endpoints: [String: String] = [
         "/v1/status": "整体状态：一句话摘要、瓶颈诊断、CPU/GPU/温度/内存/功耗/电池、占用最高的进程。参数 top=N",
-        "/v1/processes": "进程列表。参数 sort=cpu|power|memory|disk，limit=N，group=app|process",
+        "/v1/processes": "进程列表。参数 sort=cpu|power|memory|disk|gpu|threads，limit=N，group=app|process",
         "/v1/sensors": "全部温度/电源传感器（SMC + HID）",
         "/v1/hardware": "硬件信息：型号、芯片、核心、内存、存储、显示器、充电规格",
         "/v1/findings": "只返回瓶颈诊断",

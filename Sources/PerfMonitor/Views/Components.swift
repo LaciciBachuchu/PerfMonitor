@@ -249,6 +249,26 @@ enum Fmt {
         guard let w = p.powerW else { return "—" }
         return (p.powerEstimated ? "≈" : "") + String(format: "%.2f W", w)
     }
+    /// CPU-time style: "1:02:03.45" / "2:03.45" / "3.45".
+    static func duration(_ sec: Double) -> String {
+        let h = Int(sec) / 3600, m = Int(sec) % 3600 / 60
+        let s = sec - Double(h * 3600 + m * 60)
+        if h > 0 { return String(format: "%d:%02d:%05.2f", h, m, s) }
+        if m > 0 { return String(format: "%d:%05.2f", m, s) }
+        return String(format: "%.2f", s)
+    }
+
+    static func energy(_ joules: Double) -> String {
+        joules >= 3600 ? String(format: "%.2f Wh", joules / 3600) : String(format: "%.0f J", joules)
+    }
+
+    private static let sameDay: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f }()
+    private static let otherDay: DateFormatter = { let f = DateFormatter(); f.dateFormat = "M月d日 HH:mm"; return f }()
+
+    static func startTime(_ d: Date) -> String {
+        Calendar.current.isDateInToday(d) ? sameDay.string(from: d) : otherDay.string(from: d)
+    }
+
     static func pct(_ v: Double) -> String { String(format: "%.0f%%", v * 100) }
     static func mhz(_ v: Double) -> String { v >= 1000 ? String(format: "%.2f GHz", v / 1000) : String(format: "%.0f MHz", v) }
 }

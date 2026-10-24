@@ -39,6 +39,10 @@ final class Engine {
     /// When nothing shows the process list (dashboard hidden), scan processes only every
     /// third tick: the ~450-process scan is the largest part of the sampling cost.
     var lightMode = false
+    var networkEnabled: Bool {
+        get { procs.networkEnabled }
+        set { procs.networkEnabled = newValue }
+    }
     private var tick = 0
     var powerMode = PowerMode.automatic
 
@@ -114,6 +118,8 @@ final class Monitor {
     }
     /// The full sensor list is only scanned while someone is looking at it.
     @ObservationIgnored var wantsAllSensors = false
+    /// Per-process network (nettop) only runs while the network tab is shown.
+    @ObservationIgnored var wantsNetwork = false
 
     var findings: [Finding] { dashboard.findings }
 
@@ -208,6 +214,7 @@ final class Monitor {
     private func sampleOnce() {
         guard let engine else { return }
         engine.lightMode = !dashboardVisible
+        engine.networkEnabled = wantsNetwork && dashboardVisible
         let s = engine.sample()
         lock.lock(); latest = s; lock.unlock()
 

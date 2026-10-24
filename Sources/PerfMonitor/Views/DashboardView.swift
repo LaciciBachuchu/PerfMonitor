@@ -3,6 +3,8 @@ import SwiftUI
 
 struct DashboardView: View {
     @Environment(Monitor.self) private var monitor
+    @AppStorage("processPanelWidth") private var panelWidth = 560.0
+    @State private var dragStart: Double?
 
     var body: some View {
         // Plain HStack instead of HSplitView: the split view's cursor rects get rebuilt on every
@@ -11,6 +13,7 @@ struct DashboardView: View {
         // they want to be, SwiftUI measures every process row on each refresh.
         GeometryReader { g in
             if monitor.dashboardActive {
+                let pw = min(max(panelWidth, 420), max(g.size.width - 600, 420))
                 HStack(spacing: 0) {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 8) {
@@ -25,12 +28,24 @@ struct DashboardView: View {
                         }
                         .padding(10)
                     }
-                    .frame(width: max(g.size.width - 501, 0), height: g.size.height)
+                    .frame(width: max(g.size.width - pw - 5, 0), height: g.size.height)
 
-                    Divider()
+                    // Drag to resize the process panel.
+                    Rectangle().fill(.separator).frame(width: 1)
+                        .padding(.horizontal, 2)
+                        .contentShape(Rectangle())
+                        .frame(width: 5, height: g.size.height)
+                        .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+                        .gesture(DragGesture(minimumDistance: 1)
+                            .onChanged { v in
+                                let start = dragStart ?? pw
+                                dragStart = start
+                                panelWidth = min(max(start - v.translation.width, 420), g.size.width - 600)
+                            }
+                            .onEnded { _ in dragStart = nil })
 
                     ProcessPanel()
-                        .frame(width: 500, height: g.size.height)
+                        .frame(width: pw, height: g.size.height)
                 }
             } else {
                 // Window closed/minimized/covered: drop the whole view tree to free its memory.
