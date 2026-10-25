@@ -4,26 +4,45 @@ import SwiftUI
 struct DashboardView: View {
     @Environment(Monitor.self) private var monitor
     @AppStorage("showProcesses") private var showProcesses = true
+    @AppStorage("processPanelWidth") private var panelWidth = 560.0
+    @State private var dragStart: Double?
     @State private var status = PowerStatus()
 
     var body: some View {
-        Group {
+        // Our own split instead of .inspector/HSplitView: NSSplitView re-sets the cursor on every
+        // display cycle, and with an accessibility-sized pointer that alone cost ~20% CPU.
+        GeometryReader { g in
             if monitor.dashboardActive {
-                DashboardContent(status: status)
+                let pw = min(max(panelWidth, 380), max(g.size.width - 520, 380))
+                HStack(spacing: 0) {
+                    DashboardContent(status: status)
+                        .frame(width: showProcesses ? max(g.size.width - pw - 9, 0) : g.size.width, height: g.size.height)
+                    if showProcesses {
+                        Capsule().fill(.secondary.opacity(0.35)).frame(width: 3, height: 36)
+                            .frame(width: 9, height: g.size.height)
+                            .contentShape(Rectangle())
+                            .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+                            .gesture(DragGesture(minimumDistance: 1)
+                                .onChanged { v in
+                                    let start = dragStart ?? pw
+                                    dragStart = start
+                                    panelWidth = min(max(start - v.translation.width, 380), g.size.width - 520)
+                                }
+                                .onEnded { _ in dragStart = nil })
+                        ProcessPanel()
+                            .frame(width: pw, height: g.size.height)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
+                }
+                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: showProcesses)
             } else {
                 // Window closed/minimized/covered: drop the whole view tree to free its memory.
                 Color.clear
             }
         }
-        .frame(minWidth: 640, minHeight: 520)
+        .frame(minWidth: 900, minHeight: 520)
         .background(WindowBackdrop().ignoresSafeArea())
         .background(WindowVisibilityReader { monitor.dashboardVisible = $0 })
-        .inspector(isPresented: $showProcesses) {
-            Group {
-                if monitor.dashboardActive { ProcessPanel() } else { Color.clear }
-            }
-            .inspectorColumnWidth(min: 380, ideal: 560, max: 1000)
-        }
         .toolbar { DashboardToolbar(status: status, showProcesses: $showProcesses) }
         .navigationTitle("性能监控")
         .navigationSubtitle(Host.current().localizedName ?? "Mac")
@@ -45,19 +64,18 @@ private struct DashboardContent: View {
     var body: some View {
         GeometryReader { g in
             let columns = g.size.width >= 1050 ? 3 : 2
-            ViewThatFits(in: .vertical) {
-                content(columns: columns, expand: true)
-                    .frame(width: g.size.width, height: g.size.height, alignment: .top)
-                ScrollView {
-                    content(columns: columns, expand: false)
-                        .frame(width: g.size.width)
+            ScrollView {
+                FillOrGrow(minHeight: g.size.height) {
+                    content(columns: columns)
                 }
+                .frame(width: g.size.width)
             }
+            .scrollBounceBehavior(.basedOnSize)
         }
     }
 
     @ViewBuilder
-    private func content(columns: Int, expand: Bool) -> some View {
+    private func content(columns: Int) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if status.busy || status.message != nil {
                 Label(status.busy ? "请在系统授权窗口中输入 Mac 登录密码…" : status.message!,
@@ -69,12 +87,12 @@ private struct DashboardContent: View {
             GlassGroup {
                 VStack(spacing: 10) {
                     if columns == 3 {
-                        row(expand) { ThermalCard(); PowerCard(); ChargingCard() }
-                        row(expand) { CPUCard(); GPUCard(); MemoryCard() }
+                        row { ThermalCard(); PowerCard(); ChargingCard() }
+                        row { CPUCard(); GPUCard(); MemoryCard() }
                     } else {
-                        row(expand) { ThermalCard(); PowerCard() }
-                        row(expand) { CPUCard(); GPUCard() }
-                        row(expand) { MemoryCard(); ChargingCard() }
+                        row { ThermalCard(); PowerCard() }
+                        row { CPUCard(); GPUCard() }
+                        row { MemoryCard(); ChargingCard() }
                     }
                     HardwareCard().fixedSize(horizontal: false, vertical: true)
                 }
@@ -83,11 +101,26 @@ private struct DashboardContent: View {
         .padding(12)
     }
 
-    /// A row of equal-height cards that soaks up spare height when `expand` is set.
-    private func row<C: View>(_ expand: Bool, @ViewBuilder _ cards: () -> C) -> some View {
-        // Spare height goes to the charts (capped at 1.5×); when scrolling, rows take their natural height.
+    /// A row of equal-height cards; spare window height flows into their charts.
+    private func row<C: View>(@ViewBuilder _ cards: () -> C) -> some View {
         HStack(alignment: .top, spacing: 10) { cards() }
-            .fixedSize(horizontal: false, vertical: !expand)
+    }
+}
+
+/// Lays its content out at its natural height, or at `minHeight` if that's taller, so flexible
+/// children fill the window when there's room and the enclosing ScrollView scrolls when there isn't.
+struct FillOrGrow: Layout {
+    let minHeight: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first else { return .zero }
+        let width = proposal.width ?? child.sizeThatFits(.unspecified).width
+        let natural = child.sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+        return CGSize(width: width, height: max(natural, minHeight))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
     }
 }
 
@@ -298,7 +331,7 @@ struct ThermalCard: View {
                 .buttonStyle(.borderless).font(.caption2)
                 .popover(isPresented: $showSensors, arrowEdge: .trailing) { SensorsList() }
         } content: {
-            HStack(spacing: 4) {
+            MetricRow {
                 Metric(label: "SoC 最高", value: Fmt.temp(s.sensors.soc?.max), color: Palette.temp(s.sensors.soc?.max))
                 Metric(label: "P 核", value: Fmt.temp(s.sensors.pCores?.avg), color: Palette.temp(s.sensors.pCores?.avg), sub: s.sensors.pCores.map { "热点 " + Fmt.temp($0.max) })
                 Metric(label: "E 核", value: Fmt.temp(s.sensors.eCores?.avg), color: Palette.temp(s.sensors.eCores?.avg), sub: s.sensors.eCores.map { "最高 " + Fmt.temp($0.max) })
@@ -366,7 +399,7 @@ struct PowerCard: View {
         Card("整机功耗", icon: "bolt.fill", hero: String(format: "%.1f W", s.totalW), heroValue: s.totalW) {
             EmptyView()
         } content: {
-            HStack(spacing: 4) {
+            MetricRow {
                 Metric(label: "CPU", value: Fmt.watts(s.io.cpuW), color: .red,
                        sub: s.io.cpuPowerSource == "process-estimate" ? "进程能耗估算" : nil)
                 Metric(label: "GPU", value: Fmt.watts(s.io.gpuW), color: .purple)
@@ -401,7 +434,7 @@ struct CPUCard: View {
         Card("CPU", icon: "cpu", hero: Fmt.pct(s.system.cpuTotal), heroColor: Palette.load(s.system.cpuTotal), heroValue: s.system.cpuTotal) {
             EmptyView()
         } content: {
-            HStack(spacing: 4) {
+            MetricRow {
                 Metric(label: "P 核", value: Fmt.mhz(p.freqMHz), sub: p.maxMHz > 0 ? "上限 \(Fmt.mhz(p.maxMHz)) · \(Fmt.pct(p.active))" : nil)
                 Metric(label: "E 核", value: Fmt.mhz(e.freqMHz), sub: e.maxMHz > 0 ? "上限 \(Fmt.mhz(e.maxMHz)) · \(Fmt.pct(e.active))" : nil)
                 Metric(label: "功耗", value: Fmt.watts(s.io.cpuW), color: .red)
@@ -432,7 +465,7 @@ struct GPUCard: View {
         Card("GPU", icon: "square.stack.3d.up.fill", hero: Fmt.pct(s.gpuUtil), heroColor: Palette.load(s.gpuUtil), heroValue: s.gpuUtil) {
             EmptyView()
         } content: {
-            HStack(spacing: 4) {
+            MetricRow {
                 Metric(label: "频率", value: Fmt.mhz(s.io.gpu.freqMHz), sub: s.io.gpu.maxMHz > 0 ? "上限 \(Fmt.mhz(s.io.gpu.maxMHz))" : nil)
                 Metric(label: "功耗", value: Fmt.watts(s.io.gpuW), color: .purple)
                 Metric(label: "热限频", value: Fmt.pct(capped), color: capped > 0.05 ? .orange : .green, sub: "被温度压频的时间")
@@ -463,7 +496,7 @@ struct MemoryCard: View {
                 .padding(.horizontal, 6).padding(.vertical, 1)
                 .background(color.opacity(0.18), in: Capsule()).foregroundStyle(color)
         } content: {
-            HStack(spacing: 4) {
+            MetricRow {
                 Metric(label: "总内存", value: ByteFormat.short(m.total), sub: String(format: "已用 %.0f%%", m.used / max(m.total, 1) * 100))
                 Metric(label: "交换区", value: ByteFormat.short(m.swapUsed), color: m.swapUsed > m.total * 0.25 ? .orange : .primary)
                 Metric(label: "换入/换出", value: String(format: "%.0f/%.0f", m.swapInsPerSec, m.swapOutsPerSec),

@@ -4,12 +4,13 @@ import SwiftUI
 // MARK: - Tabs and columns
 
 enum ProcessTab: String, CaseIterable, Identifiable {
-    case cpu, memory, energy, disk, network
+    case cpu, gpu, memory, energy, disk, network
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .cpu: "CPU"
+        case .gpu: "GPU"
         case .memory: "内存"
         case .energy: "能耗"
         case .disk: "磁盘"
@@ -20,6 +21,7 @@ enum ProcessTab: String, CaseIterable, Identifiable {
     var columns: [PColumn] {
         switch self {
         case .cpu: [.name, .cpu, .cpuTime, .threads, .wakeups, .gpu, .gpuTime, .kind, .pid, .ppid, .user, .started]
+        case .gpu: [.name, .gpu, .gpuTime, .cpu, .power, .memory, .kind, .pid, .user]
         case .memory: [.name, .memory, .resident, .peak, .threads, .kind, .pid, .ppid, .user]
         case .energy: [.name, .power, .avgPower, .energy, .wakeups, .sleep, .cpu, .gpu, .kind, .pid, .user]
         case .disk: [.name, .readRate, .writeRate, .readTotal, .writeTotal, .pid, .user]
@@ -30,6 +32,7 @@ enum ProcessTab: String, CaseIterable, Identifiable {
     var defaultHidden: Set<PColumn> {
         switch self {
         case .cpu: [.gpuTime, .kind, .ppid, .started]
+        case .gpu: [.kind, .memory]
         case .memory: [.kind, .ppid]
         case .energy: [.energy, .gpu, .kind, .pid]
         case .disk, .network: []
@@ -39,6 +42,7 @@ enum ProcessTab: String, CaseIterable, Identifiable {
     var defaultSort: PColumn {
         switch self {
         case .cpu: .cpu
+        case .gpu: .gpu
         case .memory: .memory
         case .energy: .power
         case .disk: .writeRate
@@ -107,6 +111,7 @@ enum PColumn: String, CaseIterable {
         case .name: 190
         case .user: 74
         case .started: 110
+        case .cpuTime, .gpuTime: 92
         case .kind: 58
         case .sleep: 60
         case .pid, .ppid, .threads: 52
@@ -252,7 +257,7 @@ struct ProcessTableView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let outline = HoverOutlineView()
         outline.headerView = NSTableHeaderView()
-        outline.rowHeight = 21
+        outline.rowHeight = 24
         outline.usesAutomaticRowHeights = false
         outline.intercellSpacing = NSSize(width: 6, height: 1)
         outline.style = .plain
@@ -329,6 +334,7 @@ struct ProcessTableView: NSViewRepresentable {
                 col.isHidden = hidden.contains(c) && c != .name
                 col.sortDescriptorPrototype = NSSortDescriptor(key: c.rawValue, ascending: c.isText)
                 col.headerCell.alignment = c.numeric ? .right : .left
+                col.headerCell.font = NSFont.systemFont(ofSize: 12, weight: .medium)
                 outline.addTableColumn(col)
                 if c == .name { outline.outlineTableColumn = col }
             }
@@ -652,7 +658,7 @@ final class ProcessCell: NSTableCellView {
     init(identifier: NSUserInterfaceItemIdentifier, withIcon: Bool, numeric: Bool) {
         super.init(frame: .zero)
         self.identifier = identifier
-        label.font = NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
+        label.font = NSFont.monospacedDigitSystemFont(ofSize: 13.5, weight: .regular)
         label.lineBreakMode = withIcon ? .byTruncatingMiddle : .byTruncatingTail
         label.alignment = numeric ? .right : .left
         label.cell?.truncatesLastVisibleLine = true
@@ -670,7 +676,7 @@ final class ProcessCell: NSTableCellView {
 
     override func layout() {
         super.layout()
-        let h = bounds.height, lh: CGFloat = 17
+        let h = bounds.height, lh: CGFloat = 18
         if let icon {
             icon.frame = NSRect(x: 0, y: (h - 16) / 2, width: 16, height: 16)
             label.frame = NSRect(x: 20, y: (h - lh) / 2, width: max(bounds.width - 20, 0), height: lh)

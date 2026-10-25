@@ -22,17 +22,12 @@ struct Card<Content: View, Accessory: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+            HStack(alignment: .center, spacing: 6) {
                 Label(title, systemImage: icon).font(.system(size: 15, weight: .semibold)).foregroundStyle(.secondary)
                 Spacer(minLength: 4)
                 accessory
                 if let hero {
-                    // No numeric-roll animation: animating text over glass re-renders the glass every
-                    // frame and cost ~20% CPU.
-                    Text(hero)
-                        .font(.system(size: 34, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(heroColor)
+                    RollingNumber(text: hero, value: heroValue, size: 34, color: heroColor)
                 }
             }
             content
@@ -81,6 +76,16 @@ struct Metric: View {
             if let sub { Text(sub).font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit().lineLimit(2) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Readings that wrap onto another line instead of truncating when the card is narrow.
+struct MetricRow<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 86), spacing: 8, alignment: .topLeading)], alignment: .leading, spacing: 8) {
+            content
+        }
     }
 }
 
@@ -181,7 +186,7 @@ struct Sparkline: View {
     let series: [Series]
     var range: ClosedRange<Double>? = nil
     var unit = ""
-    var height: CGFloat = 64
+    var height: CGFloat = 56
     var stacked = false
     /// Grow to fill spare vertical space in the card.
     var flexible = true
@@ -237,7 +242,7 @@ struct Sparkline: View {
                     if stacked { base = top }
                 }
             }
-            .frame(minHeight: height, maxHeight: flexible ? height * 1.5 : height)
+            .frame(minHeight: height, maxHeight: flexible ? .infinity : height)
             .overlay(alignment: .topTrailing) {
                 Text(String(format: "%.0f%@", hi, unit)).font(.system(size: 9)).foregroundStyle(.tertiary).padding(.trailing, 1)
             }

@@ -50,6 +50,8 @@ struct ProcessPanel: View {
     @AppStorage("processFilter") private var filter = ProcessFilter.all
     @State private var query = ""
     @State private var pendingKill: ProcessStat?
+    /// The table follows the tab slightly later so the glass highlight animates without a hitch.
+    @State private var tableTab: ProcessTab?
 
     private var rows: [ProcessStat] {
         let s = monitor.dashboard
@@ -66,10 +68,7 @@ struct ProcessPanel: View {
         let rows = rows
         VStack(spacing: 0) {
             VStack(spacing: 6) {
-                Picker("", selection: $tab) {
-                    ForEach(ProcessTab.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented).labelsHidden()
+                GlassTabBar(items: ProcessTab.allCases, title: \.title, selection: $tab)
                 HStack(spacing: 6) {
                     Picker("", selection: $mode) {
                         ForEach(ProcessViewMode.allCases) { Text($0.title).tag($0) }
@@ -89,7 +88,7 @@ struct ProcessPanel: View {
             .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 6)
 
             ProcessTableView(
-                rows: rows, tab: tab, tree: mode == .tree && query.isEmpty,
+                rows: rows, tab: tableTab ?? tab, tree: mode == .tree && query.isEmpty,
                 actions: ProcessTableActions(
                     open: { openWindow(value: InspectorTarget(pid: $0.pids.first ?? 0, sample: false)) },
                     sample: { openWindow(value: InspectorTarget(pid: $0.pids.first ?? 0, sample: true)) },
@@ -97,13 +96,17 @@ struct ProcessPanel: View {
                 )
             )
 
-            SummaryBar(tab: tab)
+            SummaryBar(tab: tableTab ?? tab)
                 .padding(.horizontal, 12).padding(.vertical, 7)
                 .cardBackground(cornerRadius: 14)
                 .padding(8)
         }
         .onAppear { monitor.wantsNetwork = tab == .network }
-        .onChange(of: tab) { monitor.wantsNetwork = tab == .network }
+        .onChange(of: tab) {
+            monitor.wantsNetwork = tab == .network
+            let target = tab
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { if tab == target { tableTab = target } }
+        }
         .onDisappear { monitor.wantsNetwork = false }
         .alert("强制退出 \(pendingKill?.name ?? "")？", isPresented: Binding(get: { pendingKill != nil }, set: { if !$0 { pendingKill = nil } })) {
             Button("强制退出", role: .destructive) {
@@ -126,6 +129,12 @@ private struct SummaryBar: View {
         let s = monitor.dashboard
         let all = s.processes
         let items: [String] = switch tab {
+        case .gpu: [
+            "GPU " + Fmt.pct(s.gpuUtil),
+            "频率 " + Fmt.mhz(s.io.gpu.freqMHz),
+            "功耗 " + Fmt.watts(s.io.gpuW),
+            "使用 GPU 的进程 \(all.filter { ($0.gpu ?? 0) > 0.05 }.count) 个",
+        ]
         case .cpu: [
             String(format: "系统 %.1f%%", s.system.cpuSystem * 100),
             String(format: "用户 %.1f%%", s.system.cpuUser * 100),
@@ -159,9 +168,53 @@ private struct SummaryBar: View {
         ]
         }
         Text(items.filter { !$0.isEmpty }.joined(separator: "   "))
-            .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(.secondary)
+            .font(.system(size: 12.5).monospacedDigit()).foregroundStyle(.secondary)
             .lineLimit(1).truncationMode(.tail)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Tabs with a glass highlight that slides between items (morphs as Liquid Glass on macOS 26+).
+struct GlassTabBar<T: Hashable & Identifiable>: View {
+    let items: [T]
+    let title: KeyPath<T, String>
+    @Binding var selection: T
+    @Namespace private var ns
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(items) { item in
+                let selected = item == selection
+                Button {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { selection = item }
+                } label: {
+                    Text(item[keyPath: title])
+                        .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                        .foregroundStyle(selected ? .primary : .secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .background {
+                    if selected {
+                        highlight.matchedGeometryEffect(id: "tab", in: ns)
+                    }
+                }
+            }
+        }
+        .padding(3)
+        .background(Capsule().fill(.quaternary.opacity(0.5)))
+    }
+
+    @ViewBuilder
+    private var highlight: some View {
+        if #available(macOS 26.0, *) {
+            Capsule().fill(.clear)
+                .glassEffect(.regular.tint(Color.accentColor.opacity(0.25)).interactive(), in: Capsule())
+        } else {
+            Capsule().fill(.background).shadow(color: .black.opacity(0.15), radius: 2, y: 1)
+        }
     }
 }
 

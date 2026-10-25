@@ -11,7 +11,7 @@ struct ChargingCard: View {
              hero: p.hasBattery ? Fmt.pct(p.percent) : nil, heroValue: p.percent) {
             EmptyView()
         } content: {
-            HStack(spacing: 4) {
+            MetricRow {
                 Metric(label: chargeLabel(p),
                        value: Fmt.watts(abs(p.batteryW) > 0.05 ? abs(p.batteryW) : 0),
                        color: p.batteryW > 0.05 ? .green : (p.batteryW < -0.05 ? .orange : .primary),
@@ -63,20 +63,16 @@ struct HardwareCard: View {
                 .buttonStyle(.borderless).help("重新读取（显示器、存储空间）")
         } content: {
             if let h = monitor.hardware {
-                let rows = rows(h)
-                let perColumn = (rows.count + 2) / 3
-                HStack(alignment: .top, spacing: 14) {
-                    ForEach(0..<3, id: \.self) { col in
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(Array(rows.dropFirst(col * perColumn).prefix(perColumn).enumerated()), id: \.offset) { _, row in
-                                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                    Text(row.0).foregroundStyle(.secondary).frame(width: 62, alignment: .leading)
-                                    Text(row.1).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                                }
-                                .font(.caption)
-                            }
+                // Adaptive columns: as many as fit, so the card stays short at any width.
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 270), spacing: 18, alignment: .topLeading)],
+                          alignment: .leading, spacing: 5) {
+                    ForEach(Array(rows(h).enumerated()), id: \.offset) { _, row in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(row.0).foregroundStyle(.secondary).frame(width: 64, alignment: .leading)
+                            Text(row.1).textSelection(.enabled).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                         }
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .font(.system(size: 12))
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             } else {
