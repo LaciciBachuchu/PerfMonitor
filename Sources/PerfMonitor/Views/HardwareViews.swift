@@ -7,10 +7,9 @@ struct ChargingCard: View {
 
     var body: some View {
         let p = monitor.dashboard.power
-        Card("充电与供电", icon: p.batteryW > 0.05 ? "battery.100percent.bolt" : "powerplug") {
-            if p.hasBattery {
-                Text("电量 " + Fmt.pct(p.percent)).font(.subheadline.bold().monospacedDigit())
-            }
+        Card("充电与供电", icon: p.batteryW > 0.05 ? "battery.100percent.bolt" : "powerplug",
+             hero: p.hasBattery ? Fmt.pct(p.percent) : nil, heroValue: p.percent) {
+            EmptyView()
         } content: {
             HStack(spacing: 4) {
                 Metric(label: chargeLabel(p),
@@ -22,6 +21,12 @@ struct ChargingCard: View {
                 Metric(label: "接口对外供电", value: Fmt.watts(p.portsOutW), color: p.portsOutW > 0 ? .blue : .primary,
                        sub: p.portsOut.isEmpty ? "无设备取电" : p.portsOut.map { String(format: "口%d %.1fV×%.2fA", $0.index, $0.volts, $0.amps) }.joined(separator: " "))
             }
+            let h = monitor.history
+            Sparkline(series: [
+                .init(name: "USB-C 输入", color: .green, values: h.map(\.inputW), fill: true),
+                .init(name: "电池", color: .orange, values: h.map(\.batteryW)),
+                .init(name: "接口对外", color: .blue, values: h.map(\.portsOutW)),
+            ], unit: "W")
             InfoLine(items: [
                 p.adapter.map { String(format: "适配器 %.0f W（%@）", $0.ratedW, $0.description) } ?? "未接适配器",
                 p.adapter?.maxOfferedW.map { String(format: "PD 档位表最高 %.0f W", $0) } ?? "",
@@ -65,10 +70,10 @@ struct HardwareCard: View {
                         VStack(alignment: .leading, spacing: 2) {
                             ForEach(Array(rows.dropFirst(col * perColumn).prefix(perColumn).enumerated()), id: \.offset) { _, row in
                                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                    Text(row.0).foregroundStyle(.secondary).frame(width: 54, alignment: .leading)
+                                    Text(row.0).foregroundStyle(.secondary).frame(width: 62, alignment: .leading)
                                     Text(row.1).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                                 }
-                                .font(.caption2)
+                                .font(.caption)
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .topLeading)

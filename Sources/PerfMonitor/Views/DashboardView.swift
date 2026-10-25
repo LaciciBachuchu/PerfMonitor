@@ -3,57 +3,116 @@ import SwiftUI
 
 struct DashboardView: View {
     @Environment(Monitor.self) private var monitor
-    @AppStorage("processPanelWidth") private var panelWidth = 560.0
-    @State private var dragStart: Double?
+    @AppStorage("showProcesses") private var showProcesses = true
+    @State private var status = PowerStatus()
 
     var body: some View {
-        // Plain HStack instead of HSplitView: the split view's cursor rects get rebuilt on every
-        // refresh, which re-renders the (accessibility-sized) pointer and costs ~40% CPU.
-        // Explicit frames from GeometryReader: when a stack has to ask its scroll views how big
-        // they want to be, SwiftUI measures every process row on each refresh.
-        GeometryReader { g in
+        Group {
             if monitor.dashboardActive {
-                let pw = min(max(panelWidth, 420), max(g.size.width - 600, 420))
-                HStack(spacing: 0) {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HeaderBar()
-                            FindingsView(findings: monitor.findings)
-                            Grid(horizontalSpacing: 8, verticalSpacing: 8) {
-                                GridRow { ThermalCard(); PowerCard() }
-                                GridRow { CPUCard(); GPUCard() }
-                                GridRow { MemoryCard(); ChargingCard() }
-                                GridRow { HardwareCard().gridCellColumns(2) }
-                            }
-                        }
-                        .padding(10)
-                    }
-                    .frame(width: max(g.size.width - pw - 5, 0), height: g.size.height)
-
-                    // Drag to resize the process panel.
-                    Rectangle().fill(.separator).frame(width: 1)
-                        .padding(.horizontal, 2)
-                        .contentShape(Rectangle())
-                        .frame(width: 5, height: g.size.height)
-                        .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
-                        .gesture(DragGesture(minimumDistance: 1)
-                            .onChanged { v in
-                                let start = dragStart ?? pw
-                                dragStart = start
-                                panelWidth = min(max(start - v.translation.width, 420), g.size.width - 600)
-                            }
-                            .onEnded { _ in dragStart = nil })
-
-                    ProcessPanel()
-                        .frame(width: pw, height: g.size.height)
-                }
+                DashboardContent(status: status)
             } else {
                 // Window closed/minimized/covered: drop the whole view tree to free its memory.
                 Color.clear
             }
         }
-        .frame(minWidth: 1140, minHeight: 700)
+        .frame(minWidth: 640, minHeight: 520)
+        .background(WindowBackdrop().ignoresSafeArea())
         .background(WindowVisibilityReader { monitor.dashboardVisible = $0 })
+        .inspector(isPresented: $showProcesses) {
+            Group {
+                if monitor.dashboardActive { ProcessPanel() } else { Color.clear }
+            }
+            .inspectorColumnWidth(min: 380, ideal: 560, max: 1000)
+        }
+        .toolbar { DashboardToolbar(status: status, showProcesses: $showProcesses) }
+        .navigationTitle("性能监控")
+        .navigationSubtitle(Host.current().localizedName ?? "Mac")
+    }
+}
+
+/// Status of a pending power-mode change, shown as a banner above the cards.
+@Observable
+final class PowerStatus {
+    var busy = false
+    var message: String?
+}
+
+/// Cards fill the window; only when the window is too small to fit them does the area scroll.
+private struct DashboardContent: View {
+    @Environment(Monitor.self) private var monitor
+    let status: PowerStatus
+
+    var body: some View {
+        GeometryReader { g in
+            let columns = g.size.width >= 1050 ? 3 : 2
+            ViewThatFits(in: .vertical) {
+                content(columns: columns, expand: true)
+                    .frame(width: g.size.width, height: g.size.height, alignment: .top)
+                ScrollView {
+                    content(columns: columns, expand: false)
+                        .frame(width: g.size.width)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func content(columns: Int, expand: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if status.busy || status.message != nil {
+                Label(status.busy ? "请在系统授权窗口中输入 Mac 登录密码…" : status.message!,
+                      systemImage: status.busy ? "lock" : "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(status.busy ? .orange : .red)
+            }
+            FindingsView(findings: monitor.findings)
+                .fixedSize(horizontal: false, vertical: true)
+            GlassGroup {
+                VStack(spacing: 10) {
+                    if columns == 3 {
+                        row(expand) { ThermalCard(); PowerCard(); ChargingCard() }
+                        row(expand) { CPUCard(); GPUCard(); MemoryCard() }
+                    } else {
+                        row(expand) { ThermalCard(); PowerCard() }
+                        row(expand) { CPUCard(); GPUCard() }
+                        row(expand) { MemoryCard(); ChargingCard() }
+                    }
+                    HardwareCard().fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(12)
+    }
+
+    /// A row of equal-height cards that soaks up spare height when `expand` is set.
+    private func row<C: View>(_ expand: Bool, @ViewBuilder _ cards: () -> C) -> some View {
+        // Spare height goes to the charts (capped at 1.5×); when scrolling, rows take their natural height.
+        HStack(alignment: .top, spacing: 10) { cards() }
+            .fixedSize(horizontal: false, vertical: !expand)
+    }
+}
+
+/// The desktop shows through a blurred window background, like Control Center and widgets.
+struct WindowBackdrop: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let v = NSVisualEffectView()
+        v.material = .underWindowBackground
+        v.blendingMode = .behindWindow
+        v.state = .followsWindowActiveState
+        return v
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
+/// Groups glass shapes so neighbouring cards blend like system glass (macOS 26+).
+struct GlassGroup<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: 10) { content }
+        } else {
+            content
+        }
     }
 }
 
@@ -99,78 +158,80 @@ struct WindowVisibilityReader: NSViewRepresentable {
     }
 }
 
-// MARK: - Header
+// MARK: - Toolbar
 
-struct HeaderBar: View {
+struct DashboardToolbar: ToolbarContent {
     @Environment(Monitor.self) private var monitor
-    @State private var status: String?
-    @State private var busy = false
+    let status: PowerStatus
+    @Binding var showProcesses: Bool
     @State private var showInfo = false
     @AppStorage("floatingPanel") private var floating = false
 
-    var body: some View {
+    var body: some ToolbarContent {
         let ps = monitor.powerState
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("性能监控").font(.headline)
-                Text(Host.current().localizedName ?? "Mac").font(.caption2).foregroundStyle(.secondary)
-            }
-            .fixedSize()
-            Spacer(minLength: 6)
-
+        ToolbarItemGroup(placement: .primaryAction) {
             ForEach(PowerSource.allCases) { source in
-                HStack(spacing: 4) {
-                    Image(systemName: source == .battery ? "battery.75percent" : "powerplug").font(.caption)
-                        .foregroundStyle(.secondary).help(source == .battery ? "使用电池时" : "接通电源时")
-                    Picker("", selection: Binding(get: { ps.mode(for: source) }, set: { apply($0, [source]) })) {
-                        ForEach(PowerMode.allCases.filter { $0 != .high || ps.supportsHigh }) { Text($0.label).tag($0) }
-                    }
-                    .pickerStyle(.segmented).labelsHidden()
-                    .frame(width: ps.supportsHigh ? 170 : 110)
+                Picker(source == .battery ? "使用电池时" : "接通电源时",
+                       selection: Binding(get: { ps.mode(for: source) }, set: { apply($0, [source]) })) {
+                    ForEach(PowerMode.allCases.filter { $0 != .high || ps.supportsHigh }) { Text($0.label).tag($0) }
                 }
+                .pickerStyle(.segmented)
+                .controlSize(.large)
+                .help(source == .battery ? "使用电池时的性能档位" : "接通电源时的性能档位")
+                .overlay(alignment: .leading) {
+                    Image(systemName: source == .battery ? "battery.75percent" : "powerplug")
+                        .font(.caption2).foregroundStyle(.secondary).offset(x: -16)
+                }
+                .padding(.leading, 18)
+                .disabled(status.busy)
             }
-            .disabled(busy)
 
             Button {
-                busy = true
-                monitor.setPasswordless(!ps.passwordless) { err in busy = false; status = err }
+                status.busy = true
+                monitor.setPasswordless(!ps.passwordless) { err in status.busy = false; status.message = err }
             } label: {
-                Image(systemName: ps.passwordless ? "lock.open.fill" : "lock.fill")
-                    .foregroundStyle(ps.passwordless ? .green : .secondary)
+                Label("免密码", systemImage: ps.passwordless ? "lock.open.fill" : "lock.fill")
             }
-            .buttonStyle(.borderless)
+            .glassButton()
             .help(ps.passwordless
                   ? "已开启免密码切换（/etc/sudoers.d/perfmonitor，只允许 pmset 低功耗/性能模式命令）。点击可移除。"
                   : "切换档位目前每次都要输入密码。点击做一次授权：以后切换不再需要密码（只放行 pmset 低功耗/性能模式命令）。")
-            .disabled(busy)
+            .disabled(status.busy)
 
-            Button { showInfo.toggle() } label: { Image(systemName: "info.circle") }
-                .buttonStyle(.borderless)
+            Button { showInfo.toggle() } label: { Label("档位说明", systemImage: "info.circle") }
+                .glassButton()
                 .popover(isPresented: $showInfo, arrowEdge: .bottom) { PowerInfo(supportsHigh: ps.supportsHigh) }
-
-            Toggle(isOn: $floating) { Image(systemName: "pip") }.toggleStyle(.button).help("悬浮窗")
-
-            Picker("", selection: Binding(get: { monitor.interval }, set: { monitor.setInterval($0) })) {
-                Text("1 秒").tag(1.0)
-                Text("2 秒").tag(2.0)
-                Text("3 秒").tag(3.0)
-            }
-            .labelsHidden().frame(width: 64).help("采样间隔")
         }
-        .overlay(alignment: .bottomTrailing) {
-            if busy || status != nil {
-                Text(busy ? "请在系统授权窗口中输入 Mac 登录密码…" : status!)
-                    .font(.caption2).foregroundStyle(busy ? .orange : .red)
-                    .offset(y: 13)
+
+        ToolbarItemGroup(placement: .primaryAction) {
+            Menu {
+                Picker("采样间隔", selection: Binding(get: { monitor.interval }, set: { monitor.setInterval($0) })) {
+                    Text("1 秒").tag(1.0)
+                    Text("2 秒").tag(2.0)
+                    Text("3 秒").tag(3.0)
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Label("采样间隔", systemImage: "timer")
             }
+            .menuStyle(.button)
+            .glassButton()
+            .help("采样间隔：\(Int(monitor.interval)) 秒")
+
+            Toggle(isOn: $floating) { Label("悬浮窗", systemImage: "pip") }
+                .toggleStyle(.button).glassButton()
+                .help("悬浮窗")
+
+            Toggle(isOn: $showProcesses) { Label("进程", systemImage: "sidebar.right") }
+                .toggleStyle(.button).glassButton()
+                .help("显示或隐藏进程列表")
         }
-        .padding(.bottom, busy || status != nil ? 10 : 0)
     }
 
     private func apply(_ mode: PowerMode, _ sources: [PowerSource]) {
-        busy = !monitor.powerState.passwordless
-        status = nil
-        monitor.applyPowerMode(mode, sources: sources) { err in busy = false; status = err }
+        status.busy = !monitor.powerState.passwordless
+        status.message = nil
+        monitor.applyPowerMode(mode, sources: sources) { err in status.busy = false; status.message = err }
     }
 }
 
@@ -206,13 +267,13 @@ struct FindingsView: View {
                     RoundedRectangle(cornerRadius: 1.5).fill(Palette.severity(f.severity)).frame(width: 3)
                     VStack(alignment: .leading, spacing: 1) {
                         (Text(f.title).bold() + Text("  " + f.detail).foregroundColor(.secondary))
-                            .font(.caption).fixedSize(horizontal: false, vertical: true)
-                        Text(f.advice).font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+                            .font(.callout).fixedSize(horizontal: false, vertical: true)
+                        Text(f.advice).font(.caption).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 0)
                 }
-                .padding(.vertical, 5).padding(.horizontal, 8)
-                .background(Palette.severity(f.severity).opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(.vertical, 6).padding(.horizontal, 10)
+                .cardBackground(cornerRadius: 12, tint: Palette.severity(f.severity))
             }
         }
     }
@@ -227,7 +288,7 @@ struct ThermalCard: View {
     var body: some View {
         let s = monitor.dashboard
         let h = monitor.history
-        Card("温度", icon: "thermometer.medium") {
+        Card("温度", icon: "thermometer.medium", hero: Fmt.temp(s.socTemp), heroColor: Palette.temp(s.socTemp), heroValue: s.socTemp ?? 0) {
             Text("热压力 \(s.system.thermal.label)")
                 .font(.caption2.bold())
                 .padding(.horizontal, 6).padding(.vertical, 1)
@@ -238,7 +299,7 @@ struct ThermalCard: View {
                 .popover(isPresented: $showSensors, arrowEdge: .trailing) { SensorsList() }
         } content: {
             HStack(spacing: 4) {
-                Metric(label: "SoC", value: Fmt.temp(s.socTemp), color: Palette.temp(s.socTemp), sub: s.sensors.soc.map { "最高 " + Fmt.temp($0.max) })
+                Metric(label: "SoC 最高", value: Fmt.temp(s.sensors.soc?.max), color: Palette.temp(s.sensors.soc?.max))
                 Metric(label: "P 核", value: Fmt.temp(s.sensors.pCores?.avg), color: Palette.temp(s.sensors.pCores?.avg), sub: s.sensors.pCores.map { "热点 " + Fmt.temp($0.max) })
                 Metric(label: "E 核", value: Fmt.temp(s.sensors.eCores?.avg), color: Palette.temp(s.sensors.eCores?.avg), sub: s.sensors.eCores.map { "最高 " + Fmt.temp($0.max) })
                 Metric(label: "GPU", value: Fmt.temp(s.sensors.gpu?.avg), color: Palette.temp(s.sensors.gpu?.avg), sub: s.sensors.gpu.map { "最高 " + Fmt.temp($0.max) })
@@ -302,8 +363,8 @@ struct PowerCard: View {
         let s = monitor.dashboard
         let h = monitor.history
         let other = max(0, s.totalW - s.io.cpuW - s.io.gpuW - s.io.aneW)
-        Card("功耗", icon: "bolt.fill") {
-            Text("整机 " + Fmt.watts(s.totalW)).font(.subheadline.bold().monospacedDigit())
+        Card("整机功耗", icon: "bolt.fill", hero: String(format: "%.1f W", s.totalW), heroValue: s.totalW) {
+            EmptyView()
         } content: {
             HStack(spacing: 4) {
                 Metric(label: "CPU", value: Fmt.watts(s.io.cpuW), color: .red,
@@ -337,8 +398,8 @@ struct CPUCard: View {
         let s = monitor.dashboard
         let h = monitor.history
         let p = s.io.pCluster, e = s.io.eCluster
-        Card("CPU", icon: "cpu") {
-            Text(Fmt.pct(s.system.cpuTotal)).font(.subheadline.bold().monospacedDigit()).foregroundStyle(Palette.load(s.system.cpuTotal))
+        Card("CPU", icon: "cpu", hero: Fmt.pct(s.system.cpuTotal), heroColor: Palette.load(s.system.cpuTotal), heroValue: s.system.cpuTotal) {
+            EmptyView()
         } content: {
             HStack(spacing: 4) {
                 Metric(label: "P 核", value: Fmt.mhz(p.freqMHz), sub: p.maxMHz > 0 ? "上限 \(Fmt.mhz(p.maxMHz)) · \(Fmt.pct(p.active))" : nil)
@@ -368,8 +429,8 @@ struct GPUCard: View {
         let s = monitor.dashboard
         let h = monitor.history
         let capped = max(s.io.gpuThermalLimited, s.io.gpuPerfLost)
-        Card("GPU", icon: "square.stack.3d.up.fill") {
-            Text(Fmt.pct(s.gpuUtil)).font(.subheadline.bold().monospacedDigit()).foregroundStyle(Palette.load(s.gpuUtil))
+        Card("GPU", icon: "square.stack.3d.up.fill", hero: Fmt.pct(s.gpuUtil), heroColor: Palette.load(s.gpuUtil), heroValue: s.gpuUtil) {
+            EmptyView()
         } content: {
             HStack(spacing: 4) {
                 Metric(label: "频率", value: Fmt.mhz(s.io.gpu.freqMHz), sub: s.io.gpu.maxMHz > 0 ? "上限 \(Fmt.mhz(s.io.gpu.maxMHz))" : nil)
@@ -397,13 +458,13 @@ struct MemoryCard: View {
         case 2...: ("警告", .orange)
         default: ("正常", .green)
         }
-        Card("内存与磁盘", icon: "memorychip") {
+        Card("内存与磁盘", icon: "memorychip", hero: ByteFormat.short(m.used), heroColor: color == .green ? .primary : color, heroValue: m.used) {
             Text("压力 \(label)").font(.caption2.bold())
                 .padding(.horizontal, 6).padding(.vertical, 1)
                 .background(color.opacity(0.18), in: Capsule()).foregroundStyle(color)
         } content: {
             HStack(spacing: 4) {
-                Metric(label: "已用", value: ByteFormat.short(m.used), sub: "共 \(ByteFormat.short(m.total))")
+                Metric(label: "总内存", value: ByteFormat.short(m.total), sub: String(format: "已用 %.0f%%", m.used / max(m.total, 1) * 100))
                 Metric(label: "交换区", value: ByteFormat.short(m.swapUsed), color: m.swapUsed > m.total * 0.25 ? .orange : .primary)
                 Metric(label: "换入/换出", value: String(format: "%.0f/%.0f", m.swapInsPerSec, m.swapOutsPerSec),
                        color: m.swapOutsPerSec > 50 ? .red : .primary, sub: "页/秒")
@@ -414,6 +475,12 @@ struct MemoryCard: View {
                 .init(label: "联动", value: m.wired, color: .orange),
                 .init(label: "已压缩", value: m.compressed, color: .yellow),
             ])
+            let h = monitor.history
+            Sparkline(series: [
+                .init(name: "已用 GB", color: .blue, values: h.map(\.memUsed), fill: true),
+                .init(name: "已压缩 GB", color: .yellow, values: h.map(\.memCompressed)),
+                .init(name: "交换 GB", color: .orange, values: h.map(\.swapUsed)),
+            ], range: 0...max(m.total / 1_073_741_824, (h.map(\.swapUsed).max() ?? 0) + 0.5), unit: "G")
         }
     }
 }

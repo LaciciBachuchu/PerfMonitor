@@ -81,11 +81,12 @@ struct ProcessPanel: View {
                     .labelsHidden().fixedSize()
                     Text("\(rows.count) 项").font(.caption2).foregroundStyle(.secondary)
                     Spacer()
-                    TextField("名称或 PID", text: $query).textFieldStyle(.roundedBorder).controlSize(.small).frame(width: 120)
+                    TextField("名称或 PID", text: $query).textFieldStyle(.roundedBorder).frame(width: 130)
                 }
-                .controlSize(.small)
             }
-            .padding(.horizontal, 8).padding(.vertical, 6)
+            .padding(10)
+            .cardBackground(cornerRadius: 18)
+            .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 6)
 
             ProcessTableView(
                 rows: rows, tab: tab, tree: mode == .tree && query.isEmpty,
@@ -96,9 +97,10 @@ struct ProcessPanel: View {
                 )
             )
 
-            Divider()
             SummaryBar(tab: tab)
-                .padding(.horizontal, 8).padding(.vertical, 5)
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .cardBackground(cornerRadius: 14)
+                .padding(8)
         }
         .onAppear { monitor.wantsNetwork = tab == .network }
         .onChange(of: tab) { monitor.wantsNetwork = tab == .network }
@@ -157,7 +159,7 @@ private struct SummaryBar: View {
         ]
         }
         Text(items.filter { !$0.isEmpty }.joined(separator: "   "))
-            .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+            .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(.secondary)
             .lineLimit(1).truncationMode(.tail)
             .frame(maxWidth: .infinity, alignment: .leading)
     }

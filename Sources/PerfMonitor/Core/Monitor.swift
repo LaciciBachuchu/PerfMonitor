@@ -89,6 +89,8 @@ struct HistoryPoint: Identifiable {
     let cpuW: Double, gpuW: Double, otherW: Double
     let pTemp: Double?, eTemp: Double?, gpuTemp: Double?, socTemp: Double?
     let pFreq: Double, eFreq: Double
+    let memUsed: Double, memCompressed: Double, swapUsed: Double   // GB
+    let inputW: Double, batteryW: Double, portsOutW: Double
 }
 
 @Observable
@@ -222,7 +224,10 @@ final class Monitor {
             id: s.time, cpu: s.system.cpuTotal, gpu: s.gpuUtil,
             cpuW: s.io.cpuW, gpuW: s.io.gpuW, otherW: max(0, s.totalW - s.io.cpuW - s.io.gpuW),
             pTemp: s.sensors.pCores?.avg, eTemp: s.sensors.eCores?.avg, gpuTemp: s.sensors.gpu?.avg, socTemp: s.socTemp,
-            pFreq: s.io.pCluster.freqMHz, eFreq: s.io.eCluster.freqMHz
+            pFreq: s.io.pCluster.freqMHz, eFreq: s.io.eCluster.freqMHz,
+            memUsed: s.system.memory.used / 1_073_741_824, memCompressed: s.system.memory.compressed / 1_073_741_824,
+            swapUsed: s.system.memory.swapUsed / 1_073_741_824,
+            inputW: s.power.onAC ? (s.power.systemInW ?? 0) : 0, batteryW: s.power.batteryW, portsOutW: s.power.portsOutW
         )
         tick += 1
         let refreshMode = tick % 60 == 0

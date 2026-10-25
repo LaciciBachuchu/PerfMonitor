@@ -23,6 +23,7 @@ struct PerfMonitorApp: App {
             DashboardView().environment(delegate.monitor)
         }
         .defaultSize(width: 1320, height: 900)
+        .windowToolbarStyle(.unified(showsTitle: true))
 
         WindowGroup("进程详情", for: InspectorTarget.self) { $target in
             if let target {

@@ -3,29 +3,67 @@ import SwiftUI
 struct Card<Content: View, Accessory: View>: View {
     let title: String
     let icon: String
+    var hero: String?
+    var heroColor: Color = .primary
+    var heroValue: Double = 0
     @ViewBuilder var accessory: Accessory
     @ViewBuilder var content: Content
 
-    init(_ title: String, icon: String, @ViewBuilder accessory: () -> Accessory = { EmptyView() }, @ViewBuilder content: () -> Content) {
+    init(_ title: String, icon: String, hero: String? = nil, heroColor: Color = .primary, heroValue: Double = 0,
+         @ViewBuilder accessory: () -> Accessory = { EmptyView() }, @ViewBuilder content: () -> Content) {
         self.title = title
         self.icon = icon
+        self.hero = hero
+        self.heroColor = heroColor
+        self.heroValue = heroValue
         self.accessory = accessory()
         self.content = content()
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Label(title, systemImage: icon).font(.subheadline.bold())
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Label(title, systemImage: icon).font(.system(size: 15, weight: .semibold)).foregroundStyle(.secondary)
                 Spacer(minLength: 4)
                 accessory
+                if let hero {
+                    // No numeric-roll animation: animating text over glass re-renders the glass every
+                    // frame and cost ~20% CPU.
+                    Text(hero)
+                        .font(.system(size: 34, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(heroColor)
+                }
             }
             content
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.separator.opacity(0.5)))
+        .cardBackground()
+    }
+}
+
+extension View {
+    /// Glass buttons on macOS 26+, the default bordered style before that.
+    @ViewBuilder
+    func glassButton() -> some View {
+        if #available(macOS 26.0, *) {
+            buttonStyle(.glass)
+        } else {
+            buttonStyle(.bordered)
+        }
+    }
+
+    /// Liquid Glass on macOS 26+, frosted material before that.
+    @ViewBuilder
+    func cardBackground(cornerRadius: CGFloat = 16, tint: Color? = nil) -> some View {
+        if #available(macOS 26.0, *) {
+            glassEffect(tint.map { .regular.tint($0.opacity(0.18)) } ?? .regular,
+                        in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        } else {
+            background(.regularMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).strokeBorder(.white.opacity(0.08)))
+        }
     }
 }
 
@@ -37,10 +75,10 @@ struct Metric: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(label).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-            Text(value).font(.system(.callout, design: .rounded).weight(.semibold)).foregroundStyle(color)
+            Text(label).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+            Text(value).font(.system(size: 19, weight: .semibold, design: .rounded)).foregroundStyle(color)
                 .monospacedDigit().lineLimit(1)
-            if let sub { Text(sub).font(.system(size: 9.5)).foregroundStyle(.secondary).monospacedDigit().lineLimit(2) }
+            if let sub { Text(sub).font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit().lineLimit(2) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -50,7 +88,7 @@ struct Metric: View {
 struct InfoLine: View {
     let items: [String]
     var body: some View {
-        Text(items.joined(separator: "  ·  ")).font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+        Text(items.joined(separator: "  ·  ")).font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
             .lineLimit(2).fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -79,9 +117,9 @@ struct LabeledBar: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Text(label).font(.caption2).foregroundStyle(.secondary).frame(width: 40, alignment: .leading)
-            Bar(value: value, tint: tint)
-            Text(text).font(.caption2.monospacedDigit()).frame(width: 92, alignment: .trailing)
+            Text(label).font(.caption).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
+            Bar(value: value, tint: tint, height: 6)
+            Text(text).font(.caption.monospacedDigit()).frame(width: 104, alignment: .trailing)
         }
     }
 }
@@ -96,7 +134,7 @@ struct StackedBar: View {
 
     let total: Double
     let segments: [Segment]
-    var height: CGFloat = 14
+    var height: CGFloat = 16
 
     var body: some View {
         let used = segments.reduce(0) { $0 + $1.value }
@@ -125,7 +163,7 @@ struct StackedBar: View {
                     Text("空闲 \(ByteFormat.short(max(0, total - used)))")
                 }
             }
-            .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
         }
     }
 }
@@ -143,8 +181,10 @@ struct Sparkline: View {
     let series: [Series]
     var range: ClosedRange<Double>? = nil
     var unit = ""
-    var height: CGFloat = 44
+    var height: CGFloat = 64
     var stacked = false
+    /// Grow to fill spare vertical space in the card.
+    var flexible = true
 
     var body: some View {
         let all = series.flatMap { $0.values.compactMap { $0 } }
@@ -166,15 +206,26 @@ struct Sparkline: View {
                 for s in series {
                     var line = Path(), area = Path()
                     var started = false
+                    var prevPt = CGPoint.zero
                     var top = base
                     for (i, v) in s.values.enumerated() {
                         guard let v else { continue }
                         top[i] = (stacked ? base[i] : 0) + v
                         let p = pt(i, top[i])
-                        if !started { line.move(to: p); area.move(to: pt(i, stacked ? base[i] : lo)); area.addLine(to: p); started = true }
-                        else { line.addLine(to: p); area.addLine(to: p) }
+                        if !started {
+                            line.move(to: p); area.move(to: pt(i, stacked ? base[i] : lo)); area.addLine(to: p); started = true
+                        } else if stacked {
+                            line.addLine(to: p); area.addLine(to: p)
+                        } else {
+                            // Smooth curve: quadratic segments through the midpoints.
+                            let mid = CGPoint(x: (prevPt.x + p.x) / 2, y: (prevPt.y + p.y) / 2)
+                            line.addQuadCurve(to: mid, control: prevPt)
+                            area.addQuadCurve(to: mid, control: prevPt)
+                        }
+                        prevPt = p
                     }
                     guard started else { continue }
+                    if !stacked { line.addLine(to: prevPt); area.addLine(to: prevPt) }
                     if s.fill || stacked {
                         for i in stride(from: s.values.count - 1, through: 0, by: -1) where s.values[i] != nil {
                             area.addLine(to: pt(i, stacked ? base[i] : lo))
@@ -182,19 +233,19 @@ struct Sparkline: View {
                         area.closeSubpath()
                         ctx.fill(area, with: .color(s.color.opacity(stacked ? 0.55 : 0.18)))
                     }
-                    ctx.stroke(line, with: .color(s.color), lineWidth: 1.2)
+                    ctx.stroke(line, with: .color(s.color), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
                     if stacked { base = top }
                 }
             }
-            .frame(height: height)
+            .frame(minHeight: height, maxHeight: flexible ? height * 1.5 : height)
             .overlay(alignment: .topTrailing) {
-                Text(String(format: "%.0f%@", hi, unit)).font(.system(size: 8)).foregroundStyle(.tertiary).padding(.trailing, 1)
+                Text(String(format: "%.0f%@", hi, unit)).font(.system(size: 9)).foregroundStyle(.tertiary).padding(.trailing, 1)
             }
             HStack(spacing: 8) {
                 ForEach(series.indices, id: \.self) { i in
                     HStack(spacing: 3) {
                         Circle().fill(series[i].color).frame(width: 5, height: 5)
-                        Text(series[i].name).font(.system(size: 9)).foregroundStyle(.secondary)
+                        Text(series[i].name).font(.caption2).foregroundStyle(.secondary)
                     }
                 }
             }

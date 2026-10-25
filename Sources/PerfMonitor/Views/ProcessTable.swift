@@ -252,7 +252,7 @@ struct ProcessTableView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let outline = HoverOutlineView()
         outline.headerView = NSTableHeaderView()
-        outline.rowHeight = 19
+        outline.rowHeight = 21
         outline.usesAutomaticRowHeights = false
         outline.intercellSpacing = NSSize(width: 6, height: 1)
         outline.style = .plain
@@ -652,7 +652,7 @@ final class ProcessCell: NSTableCellView {
     init(identifier: NSUserInterfaceItemIdentifier, withIcon: Bool, numeric: Bool) {
         super.init(frame: .zero)
         self.identifier = identifier
-        label.font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .regular)
+        label.font = NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
         label.lineBreakMode = withIcon ? .byTruncatingMiddle : .byTruncatingTail
         label.alignment = numeric ? .right : .left
         label.cell?.truncatesLastVisibleLine = true
@@ -670,10 +670,10 @@ final class ProcessCell: NSTableCellView {
 
     override func layout() {
         super.layout()
-        let h = bounds.height, lh: CGFloat = 15
+        let h = bounds.height, lh: CGFloat = 17
         if let icon {
-            icon.frame = NSRect(x: 0, y: (h - 14) / 2, width: 14, height: 14)
-            label.frame = NSRect(x: 18, y: (h - lh) / 2, width: max(bounds.width - 18, 0), height: lh)
+            icon.frame = NSRect(x: 0, y: (h - 16) / 2, width: 16, height: 16)
+            label.frame = NSRect(x: 20, y: (h - lh) / 2, width: max(bounds.width - 20, 0), height: lh)
         } else {
             label.frame = NSRect(x: 0, y: (h - lh) / 2, width: bounds.width, height: lh)
         }
