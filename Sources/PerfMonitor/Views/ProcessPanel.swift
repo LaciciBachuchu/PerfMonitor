@@ -175,18 +175,23 @@ private struct SummaryBar: View {
 }
 
 /// Tabs with a glass highlight that slides between items (morphs as Liquid Glass on macOS 26+).
+/// The highlight follows a local @State: changes written through @AppStorage don't carry the
+/// animation transaction, so animating the binding directly made the highlight jump.
 struct GlassTabBar<T: Hashable & Identifiable>: View {
     let items: [T]
     let title: KeyPath<T, String>
     @Binding var selection: T
+    @State private var shown: T?
     @Namespace private var ns
 
     var body: some View {
+        let current = shown ?? selection
         HStack(spacing: 2) {
             ForEach(items) { item in
-                let selected = item == selection
+                let selected = item == current
                 Button {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { selection = item }
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) { shown = item }
+                    selection = item
                 } label: {
                     Text(item[keyPath: title])
                         .font(.system(size: 13, weight: selected ? .semibold : .regular))
@@ -205,6 +210,9 @@ struct GlassTabBar<T: Hashable & Identifiable>: View {
         }
         .padding(3)
         .background(Capsule().fill(.quaternary.opacity(0.5)))
+        .onChange(of: selection) {
+            if shown != selection { withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) { shown = selection } }
+        }
     }
 
     @ViewBuilder
