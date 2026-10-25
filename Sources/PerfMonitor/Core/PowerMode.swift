@@ -87,18 +87,33 @@ enum PowerModeControl {
 
     /// Applies a mode for the given power sources. Uses the passwordless sudo rule when
     /// installed; otherwise macOS shows its administrator password dialog.
-    static func apply(_ mode: PowerMode, sources: [PowerSource], supportsHigh: Bool) -> String? {
+    /// With `installPasswordless`, the sudoers rule is installed in the same password prompt.
+    static func apply(_ mode: PowerMode, sources: [PowerSource], supportsHigh: Bool, installPasswordless: Bool = false) -> String? {
         let commands = sources.map { pmsetArgs(mode, $0, supportsHigh: supportsHigh) }
         if commands.allSatisfy({ run("/usr/bin/sudo", ["-n", "/usr/bin/pmset"] + $0, status: true) == "0" }) { return nil }
-        let shell = commands.map { "/usr/bin/pmset " + $0.joined(separator: " ") }.joined(separator: " && ")
-        return admin(shell, prompt: "性能监控要切换性能档位（\(mode.label)）。")
+        var shell = commands.map { "/usr/bin/pmset " + $0.joined(separator: " ") }.joined(separator: " && ")
+        var prompt = "性能监控要切换性能档位（\(mode.label)）。"
+        var cleanup: URL?
+        if installPasswordless {
+            switch passwordlessCommand() {
+            case .success(let (cmd, tmp)):
+                shell += " && " + cmd
+                cleanup = tmp
+                prompt += "并开启免密码切换：以后不再需要输入密码（仅限 pmset 低功耗/性能模式命令）。"
+            case .failure(let err):
+                return err.message
+            }
+        }
+        defer { if let cleanup { try? FileManager.default.removeItem(at: cleanup) } }
+        return admin(shell, prompt: prompt)
     }
 
-    /// Installs a sudoers rule that lets *this user* run exactly the pmset commands above
-    /// without a password. Asks for the admin password once; validated with visudo first.
-    static func installPasswordless() -> String? {
+    private struct Failure: Error { let message: String }
+
+    /// Shell command that validates and installs the sudoers rule, plus the temp file it reads.
+    private static func passwordlessCommand() -> Result<(String, URL), Failure> {
         let user = NSUserName()
-        guard user.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil else { return "用户名包含不支持的字符" }
+        guard user.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil else { return .failure(Failure(message: "用户名包含不支持的字符")) }
         var allowed: [String] = []
         for source in ["-a", "-b", "-c"] {
             allowed += ["0", "1"].map { "/usr/bin/pmset \(source) lowpowermode \($0)" }
@@ -107,11 +122,20 @@ enum PowerModeControl {
         let rule = "# Installed by PerfMonitor: switch energy mode without a password.\n"
             + "\(user) ALL=(root) NOPASSWD: " + allowed.joined(separator: ", ") + "\n"
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("perfmonitor-sudoers-\(UUID().uuidString)")
-        do { try rule.write(to: tmp, atomically: true, encoding: .utf8) } catch { return error.localizedDescription }
-        defer { try? FileManager.default.removeItem(at: tmp) }
-        let path = tmp.path
-        return admin("/usr/sbin/visudo -cf '\(path)' && /usr/bin/install -m 0440 -o root -g wheel '\(path)' \(sudoersPath)",
-                     prompt: "性能监控要添加一条规则：以后切换性能档位不再需要输入密码（仅限 pmset 低功耗/性能模式命令）。")
+        do { try rule.write(to: tmp, atomically: true, encoding: .utf8) } catch { return .failure(Failure(message: error.localizedDescription)) }
+        return .success(("/usr/sbin/visudo -cf '\(tmp.path)' && /usr/bin/install -m 0440 -o root -g wheel '\(tmp.path)' \(sudoersPath)", tmp))
+    }
+
+    /// Installs a sudoers rule that lets *this user* run exactly the pmset commands above
+    /// without a password. Asks for the admin password once; validated with visudo first.
+    static func installPasswordless() -> String? {
+        switch passwordlessCommand() {
+        case .success(let (cmd, tmp)):
+            defer { try? FileManager.default.removeItem(at: tmp) }
+            return admin(cmd, prompt: "性能监控要添加一条规则：以后切换性能档位不再需要输入密码（仅限 pmset 低功耗/性能模式命令）。")
+        case .failure(let err):
+            return err.message
+        }
     }
 
     static func removePasswordless() -> String? {

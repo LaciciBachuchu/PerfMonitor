@@ -167,9 +167,11 @@ final class Monitor {
         }
     }
 
-    func applyPowerMode(_ mode: PowerMode, sources: [PowerSource], completion: @escaping (String?) -> Void) {
+    func applyPowerMode(_ mode: PowerMode, sources: [PowerSource], installPasswordless: Bool = false, completion: @escaping (String?) -> Void) {
         let supportsHigh = powerState.supportsHigh
-        runPrivileged(completion) { PowerModeControl.apply(mode, sources: sources, supportsHigh: supportsHigh) }
+        runPrivileged(completion) {
+            PowerModeControl.apply(mode, sources: sources, supportsHigh: supportsHigh, installPasswordless: installPasswordless)
+        }
     }
 
     func setPasswordless(_ on: Bool, completion: @escaping (String?) -> Void) {

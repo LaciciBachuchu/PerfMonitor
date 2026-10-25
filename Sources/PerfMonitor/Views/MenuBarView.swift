@@ -2,12 +2,15 @@ import SwiftUI
 
 struct MenuBarLabel: View {
     var monitor: Monitor
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         HStack(spacing: 3) {
             Image(systemName: monitor.menuBarHot ? "flame.fill" : "thermometer.medium")
             Text(monitor.menuBarText).monospacedDigit()
         }
+        // The menu bar label lives for the whole session, so it hands AppKit a way to open the dashboard.
+        .onAppear { AppDelegate.openDashboard = { openWindow(id: "main") } }
     }
 }
 
@@ -55,10 +58,7 @@ struct MenuBarView: View {
 
             Divider()
             HStack {
-                Button("打开监控面板") {
-                    openWindow(id: "main")
-                    NSApp.activate(ignoringOtherApps: true)
-                }
+                Button("打开监控面板") { AppDelegate.showDashboard() }
                 Toggle("悬浮窗", isOn: $floating).toggleStyle(.checkbox)
                 Spacer()
                 Button("退出") { NSApp.terminate(nil) }

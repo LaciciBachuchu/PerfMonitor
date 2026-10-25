@@ -44,8 +44,28 @@ struct DashboardView: View {
         .background(WindowBackdrop().ignoresSafeArea())
         .background(WindowVisibilityReader { monitor.dashboardVisible = $0 })
         .toolbar { DashboardToolbar(status: status, showProcesses: $showProcesses) }
+        .alert("切换性能档位需要管理员密码", isPresented: Binding(get: { status.pending != nil }, set: { if !$0 { status.pending = nil } })) {
+            Button("切换并开启免密码") { runPending(installPasswordless: true) }
+            Button("只切换这一次") { runPending(installPasswordless: false) }
+            Button("取消", role: .cancel) { status.pending = nil }
+        } message: {
+            Text("要顺便开启免密码切换吗？只需在接下来的系统窗口里输入这一次密码，以后切换档位就不会再问。规则只放行 pmset 的低功耗 / 性能模式命令，随时可以在工具栏的锁形按钮里移除。")
+        }
         .navigationTitle("性能监控")
         .navigationSubtitle(Host.current().localizedName ?? "Mac")
+    }
+}
+
+extension DashboardView {
+    fileprivate func runPending(installPasswordless: Bool) {
+        guard let p = status.pending else { return }
+        status.pending = nil
+        status.busy = true
+        status.message = nil
+        monitor.applyPowerMode(p.mode, sources: p.sources, installPasswordless: installPasswordless) { err in
+            status.busy = false
+            status.message = err
+        }
     }
 }
 
@@ -54,6 +74,8 @@ struct DashboardView: View {
 final class PowerStatus {
     var busy = false
     var message: String?
+    /// A switch waiting for the "also stop asking for the password?" choice.
+    var pending: (mode: PowerMode, sources: [PowerSource])?
 }
 
 /// Cards fill the window; only when the window is too small to fit them does the area scroll.
@@ -170,6 +192,8 @@ struct WindowVisibilityReader: NSViewRepresentable {
             tokens.forEach(NotificationCenter.default.removeObserver)
             tokens = []
             guard let window else { onChange?(false); return }
+            // Always come up on the desktop the user is looking at.
+            window.collectionBehavior.insert(.moveToActiveSpace)
             let report: (Notification) -> Void = { [weak self] n in
                 guard let self, let w = self.window else { return }
                 self.onChange?(n.name != NSWindow.willCloseNotification && Self.isVisible(w))
@@ -262,9 +286,13 @@ struct DashboardToolbar: ToolbarContent {
     }
 
     private func apply(_ mode: PowerMode, _ sources: [PowerSource]) {
-        status.busy = !monitor.powerState.passwordless
+        guard monitor.powerState.passwordless else {
+            // Offer to stop asking, in the same password prompt as this switch.
+            status.pending = (mode, sources)
+            return
+        }
         status.message = nil
-        monitor.applyPowerMode(mode, sources: sources) { err in status.busy = false; status.message = err }
+        monitor.applyPowerMode(mode, sources: sources) { err in status.message = err }
     }
 }
 

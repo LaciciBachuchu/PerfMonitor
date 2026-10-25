@@ -13,6 +13,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Closing the dashboard keeps the menu bar item running.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Set by a always-alive view so AppKit code can open the SwiftUI dashboard window.
+    static var openDashboard: (() -> Void)?
+
+    /// Dock icon clicked. The menu bar item counts as a visible window, so SwiftUI's default
+    /// handling assumed a window was already showing and did nothing.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        Self.showDashboard()
+        return false
+    }
+
+    static func showDashboard() {
+        if let w = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true && !($0 is NSPanel) }) {
+            w.collectionBehavior.insert(.moveToActiveSpace)
+            if w.isMiniaturized { w.deminiaturize(nil) }
+            w.makeKeyAndOrderFront(nil)
+        } else {
+            openDashboard?()
+        }
+        NSApp.activate(ignoringOtherApps: true)
+    }
 }
 
 struct PerfMonitorApp: App {
