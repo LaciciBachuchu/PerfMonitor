@@ -90,7 +90,13 @@ struct ProcessPanel: View {
                 actions: ProcessTableActions(
                     open: { openWindow(value: InspectorTarget(pid: $0.pids.first ?? 0, sample: false)) },
                     sample: { openWindow(value: InspectorTarget(pid: $0.pids.first ?? 0, sample: true)) },
-                    confirmKill: { pendingKill = $0 }
+                    confirmKill: { pendingKill = $0 },
+                    track: { p in
+                        // A whole app by its bundle; a lone process by PID.
+                        let target = p.appPath ?? (p.pids.first.map(String.init) ?? p.name)
+                        _ = monitor.startTracking(target: target, seconds: nil, network: false)
+                        openWindow(id: "tracks")
+                    }
                 )
             )
 

@@ -50,6 +50,12 @@ open PerfMonitor.app
   - 双击进程打开详情：路径、父进程、启动时间、代码签名、沙盒，打开的文件和网络端口，以及「采样」（`sample` 的调用栈报告）。
   - 右键菜单：采样、限制到能效核、发送信号、退出 / 强制退出、在访达中显示、拷贝 PID 和路径。
   - 可用的列：% CPU、CPU 时间、线程、空闲唤醒、% GPU、GPU 时间、种类（Apple / Intel）、内存、实际内存、峰值内存、功耗、平均功耗、累计能耗、阻止睡眠、磁盘读写、网络收发、PID、父 PID、用户、启动时间。
+- **性能追踪**：在后台记录某个应用一段时间里到底用了多少资源，比如「ChatGPT 开一下午，占了我多少 CPU 和电」。
+  - 入口：工具栏的波形按钮、菜单栏的「性能追踪」，或在进程列表里右键一个应用选「追踪性能…」。
+  - 输入应用名、进程名或 PID，选时长（5 分钟到 8 小时，或一直记录到手动停止）。应用的所有 Helper 进程会合并统计；应用还没打开也可以先开始，打开后自动计入。
+  - 结果：平均和峰值 CPU、占整机 CPU 的比例、CPU 时间、平均和峰值内存、CPU 能耗及占整机能耗的比例、GPU、磁盘读写、可选的网络流量、空闲唤醒，以及各子进程分别用了多少，配 CPU / 内存 / 功耗曲线。
+  - 记录保存在 `~/Library/Application Support/PerfMonitor/tracks/`。PerfMonitor 退出时正在进行的追踪会标为「已中断」。
+  - 能耗只算 CPU 部分（内核按进程记的能耗），不含屏幕、GPU 和内存。
 - **菜单栏**：常驻显示 SoC 温度和整机功耗；点开后可以看占用最高的进程，也能开关悬浮窗。
 - **悬浮窗**：始终置顶，所有桌面都显示，点击它不会抢走当前窗口的焦点。可以拖动，位置会被记住。从主面板右上角的画中画按钮或菜单栏开启。
 - **性能档位**：电池和电源两种供电状态可以分别设为“低功耗 / 自动”；支持的机型还会多出“高性能”。
@@ -69,9 +75,17 @@ perfmon processes --sort power --limit 10
 perfmon sensors
 perfmon hardware
 perfmon watch
+
+perfmon track start ChatGPT --minutes 30       # 开始追踪，30 分钟后自动停止
+perfmon track start ChatGPT --minutes 10 --wait  # 等到结束，直接打印汇总
+perfmon track list
+perfmon track show <记录ID> [--json] [--samples]
+perfmon track stop <记录ID 或应用名>
 ```
 
-### HTTP（只读，只监听 127.0.0.1:47823）
+追踪由 App 负责记录；App 没运行时，`track start` 会自动在后台启动它。
+
+### HTTP（只监听 127.0.0.1:47823）
 
 ```bash
 curl http://127.0.0.1:47823/v1/status
@@ -79,7 +93,13 @@ curl "http://127.0.0.1:47823/v1/processes?sort=memory&limit=5"
 curl http://127.0.0.1:47823/v1/sensors
 curl http://127.0.0.1:47823/v1/hardware
 curl http://127.0.0.1:47823/v1/findings
+curl http://127.0.0.1:47823/v1/tracks
+curl "http://127.0.0.1:47823/v1/tracks/<记录ID>?samples=1"
+curl -X POST "http://127.0.0.1:47823/v1/tracks/start?target=ChatGPT&minutes=30"
+curl -X POST http://127.0.0.1:47823/v1/tracks/<记录ID>/stop
 ```
+
+只有开始和停止追踪用 POST，其余都是只读的 GET。带 `Origin` 头的 POST（也就是网页发来的）会被拒绝。
 
 JSON 字段统一使用 snake_case，单位写在字段名里：`_pct`、`_w`、`_c`、`_mhz`、`_bytes`、`_bps`。
 
@@ -89,7 +109,9 @@ JSON 字段统一使用 snake_case，单位写在字段名里：`_pct`、`_w`、
 claude mcp add perfmonitor -- ~/.local/bin/perfmon mcp
 ```
 
-提供 4 个只读工具：`get_system_status`、`get_top_processes`、`get_sensors`、`get_hardware_info`。
+提供 8 个工具：
+- 只读：`get_system_status`、`get_top_processes`、`get_sensors`、`get_hardware_info`。
+- 性能追踪：`start_tracking`、`stop_tracking`、`list_trackings`、`get_tracking`。只会开始或停止记录，不会改动系统。
 
 ## 数据来源
 

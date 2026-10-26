@@ -28,6 +28,33 @@ enum MCPServer {
             "description": "硬件信息：机型、芯片、CPU/GPU 核心与最高频率、内存、存储、显示器（当前/最高分辨率与刷新率）、充电规格。",
             "inputSchema": ["type": "object", "properties": [:] as [String: Any]],
         ],
+        [
+            "name": "start_tracking",
+            "description": "开始在后台追踪某个应用（含它的所有 Helper 进程）或单个进程一段时间的性能占用：CPU、内存、CPU 能耗、GPU、磁盘（可选网络）。应用还没打开也可以先开始，打开后自动计入。返回记录 ID；之后用 get_tracking 查看。需要 PerfMonitor.app，未运行会自动在后台启动。",
+            "inputSchema": ["type": "object", "required": ["target"], "properties": [
+                "target": ["type": "string", "description": "应用名（如 ChatGPT、Google Chrome）、进程名、PID 或 .app 路径"],
+                "minutes": ["type": "number", "description": "多少分钟后自动停止；省略则一直记录到 stop_tracking"],
+                "network": ["type": "boolean", "description": "同时记录网络流量（会多一点开销），默认 false"],
+            ]],
+        ],
+        [
+            "name": "stop_tracking",
+            "description": "停止追踪并返回汇总。id 可以是记录 ID，也可以是应用名（停止该应用所有进行中的追踪）。",
+            "inputSchema": ["type": "object", "required": ["id"], "properties": ["id": ["type": "string"]]],
+        ],
+        [
+            "name": "list_trackings",
+            "description": "全部性能追踪记录（进行中和已结束的），每条带一句话汇总、平均/峰值 CPU、内存、能耗及占整机比例。",
+            "inputSchema": ["type": "object", "properties": [:] as [String: Any]],
+        ],
+        [
+            "name": "get_tracking",
+            "description": "一条追踪记录的详细汇总：时长、平均与峰值 CPU、占整机 CPU 比例、平均/峰值内存、CPU 能耗（J/Wh）与占整机能耗比例、GPU、磁盘读写、各子进程分别用了多少。include_samples=true 时附带时间序列。",
+            "inputSchema": ["type": "object", "required": ["id"], "properties": [
+                "id": ["type": "string"],
+                "include_samples": ["type": "boolean"],
+            ]],
+        ],
     ]
 
     static func run() -> Never {
@@ -45,8 +72,8 @@ enum MCPServer {
                 reply(id, result: [
                     "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                     "capabilities": ["tools": [:] as [String: Any]],
-                    "serverInfo": ["name": "perfmonitor", "version": "1.1"],
-                    "instructions": "本机（macOS）实时性能监控。想知道电脑现在卡不卡、哪里是瓶颈、多热、多耗电时，先调用 get_system_status。",
+                    "serverInfo": ["name": "perfmonitor", "version": "1.7"],
+                    "instructions": "本机（macOS）实时性能监控。想知道电脑现在卡不卡、哪里是瓶颈、多热、多耗电时，先调用 get_system_status。想知道某个应用一段时间里到底占用了多少资源，用 start_tracking / get_tracking。",
                 ])
             case "ping":
                 reply(id, result: [:])
@@ -55,20 +82,28 @@ enum MCPServer {
             case "tools/call":
                 let name = params["name"] as? String ?? ""
                 let a = params["arguments"] as? [String: Any] ?? [:]
+                let enc = { (s: String) in s.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&=+/"))) ?? s }
+                var method = "GET"
                 let path: String? = switch name {
                 case "get_system_status": "/v1/status?top=\(a["top"] as? Int ?? 8)"
                 case "get_top_processes":
                     "/v1/processes?sort=\(a["sort"] as? String ?? "cpu")&limit=\(a["limit"] as? Int ?? 15)&group=\((a["per_process"] as? Bool ?? false) ? "process" : "app")"
                 case "get_sensors": "/v1/sensors"
                 case "get_hardware_info": "/v1/hardware"
+                case "start_tracking":
+                    "/v1/tracks/start?target=\(enc(a["target"] as? String ?? ""))"
+                        + ((a["minutes"] as? Double).map { "&minutes=\($0)" } ?? "")
+                        + ((a["network"] as? Bool ?? false) ? "&network=1" : "")
+                case "stop_tracking": "/v1/tracks/\(enc(a["id"] as? String ?? ""))/stop"
+                case "list_trackings": "/v1/tracks"
+                case "get_tracking": "/v1/tracks/\(enc(a["id"] as? String ?? ""))" + ((a["include_samples"] as? Bool ?? false) ? "?samples=1" : "")
                 default: nil
                 }
+                if name == "start_tracking" || name == "stop_tracking" { method = "POST" }
                 guard let path else { replyError(id, code: -32602, message: "unknown tool: \(name)"); continue }
-                if let data = Fetcher.get(path) {
-                    reply(id, result: ["content": [["type": "text", "text": String(decoding: data, as: UTF8.self)]], "isError": false])
-                } else {
-                    reply(id, result: ["content": [["type": "text", "text": "无法获取数据"]], "isError": true])
-                }
+                let (status, data) = Fetcher.request(method, path)
+                let text = data.isEmpty ? "无法获取数据" : String(decoding: data, as: UTF8.self)
+                reply(id, result: ["content": [["type": "text", "text": text]], "isError": status != 200])
             default:
                 replyError(id, code: -32601, message: "method not found: \(method)")
             }

@@ -211,7 +211,7 @@ final class ProcessSampler {
     private static var displayNames: [String: String] = [:]
     private static let namesLock = NSLock()
 
-    private static func displayName(_ app: String) -> String {
+    static func displayName(_ app: String) -> String {
         namesLock.lock(); defer { namesLock.unlock() }
         if let n = displayNames[app] { return n }
         let n = FileManager.default.displayName(atPath: app).replacingOccurrences(of: ".app", with: "")

@@ -59,6 +59,7 @@ struct MenuBarView: View {
             Divider()
             HStack {
                 Button("打开监控面板") { AppDelegate.showDashboard() }
+                Button("性能追踪") { openWindow(id: "tracks"); NSApp.activate(ignoringOtherApps: true) }
                 Toggle("悬浮窗", isOn: $floating).toggleStyle(.checkbox)
                 Spacer()
                 Button("退出") { NSApp.terminate(nil) }

@@ -11,6 +11,11 @@ enum CLI {
       perfmon sensors [--json]                 全部温度/电源传感器
       perfmon hardware [--json]                硬件信息
       perfmon watch [--interval 2]             持续刷新状态
+      perfmon track start <应用名|PID> [--minutes N] [--network] [--wait]
+                                               开始追踪某个应用一段时间的性能占用（--wait 等到结束并打印汇总）
+      perfmon track stop <记录ID|应用名>       停止追踪并打印汇总
+      perfmon track list [--json]              全部追踪记录
+      perfmon track show <记录ID> [--json] [--samples]
       perfmon mcp                              以 MCP 服务器（stdio）运行，供 Claude Code 等 agent 调用
       perfmon api                              显示 HTTP API 地址与端点
 
@@ -61,6 +66,8 @@ enum CLI {
                 printStatus(r)
                 Thread.sleep(forTimeInterval: interval)
             }
+        case "track", "tracks":
+            return track(rest, json: json, opt: opt)
         case "mcp":
             MCPServer.run()
         case "api":
@@ -72,6 +79,81 @@ enum CLI {
             return cmd == "help" || cmd == "--help" || cmd == "-h" ? 0 : 2
         }
         return 0
+    }
+
+    private static func track(_ rest: [String], json: Bool, opt: (String) -> String?) -> Int32 {
+        let sub = rest.first ?? "list"
+        // First argument that isn't a flag or a flag's value.
+        var positional: String?
+        var i = 1
+        while i < rest.count {
+            if ["--minutes", "--seconds"].contains(rest[i]) { i += 2; continue }
+            if !rest[i].hasPrefix("--") { positional = rest[i]; break }
+            i += 1
+        }
+        let enc = { (s: String) in s.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&=+/"))) ?? s }
+
+        func show(_ status: Int, _ data: Data) -> Int32 {
+            guard status == 200 else {
+                let msg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
+                FileHandle.standardError.write(Data("perfmon: \(msg ?? "无法获取数据")\n".utf8))
+                return 1
+            }
+            if json { print(String(decoding: data, as: UTF8.self)); return 0 }
+            if let r = decode(TrackReport.self, data) { printTrack(r) }
+            else if let list = decode([TrackReport].self, data) { list.forEach(printTrack) }
+            return 0
+        }
+
+        switch sub {
+        case "start":
+            guard let target = positional else { print("用法: perfmon track start <应用名|PID> [--minutes N] [--network] [--wait]"); return 2 }
+            var path = "/v1/tracks/start?target=\(enc(target))"
+            if let m = opt("--minutes") { path += "&minutes=\(m)" }
+            if let sec = opt("--seconds") { path += "&seconds=\(sec)" }
+            if rest.contains("--network") { path += "&network=1" }
+            let (status, data) = Fetcher.request("POST", path)
+            guard status == 200, let r = decode(TrackReport.self, data) else { return show(status, data) }
+            guard rest.contains("--wait") else {
+                if json { print(String(decoding: data, as: UTF8.self)) }
+                else {
+                    print("开始追踪「\(r.name)」，记录 ID：\(r.id)" + (r.plannedSeconds.map { "，\(Int($0 / 60)) 分 \(Int($0) % 60) 秒后自动停止" } ?? ""))
+                    print("查看：perfmon track show \(r.id)    停止：perfmon track stop \(r.id)")
+                }
+                return 0
+            }
+            guard r.plannedSeconds != nil else { print("--wait 需要同时给出 --minutes 或 --seconds"); return 2 }
+            if !json { print("正在追踪「\(r.name)」……（Ctrl-C 只停止等待，追踪会继续）") }
+            while true {
+                Thread.sleep(forTimeInterval: 2)
+                let (st, d) = Fetcher.request("GET", "/v1/tracks/\(r.id)")
+                guard st == 200, let now = decode(TrackReport.self, d) else { return show(st, d) }
+                if now.status != "recording" { return show(st, d) }
+            }
+        case "stop":
+            guard let key = positional else { print("用法: perfmon track stop <记录ID|应用名>"); return 2 }
+            let (status, data) = Fetcher.request("POST", "/v1/tracks/\(enc(key))/stop")
+            return show(status, data)
+        case "show", "get":
+            guard let id = positional else { print("用法: perfmon track show <记录ID>"); return 2 }
+            let (status, data) = Fetcher.request("GET", "/v1/tracks/\(enc(id))" + (rest.contains("--samples") ? "?samples=1" : ""))
+            return show(status, data)
+        default:
+            let (status, data) = Fetcher.request("GET", "/v1/tracks")
+            if status == 200, !json, decode([TrackReport].self, data)?.isEmpty == true { print("还没有追踪记录。用 perfmon track start <应用名> 开始。"); return 0 }
+            return show(status, data)
+        }
+    }
+
+    private static func printTrack(_ r: TrackReport) {
+        let state = ["recording": "● 追踪中", "finished": "已结束", "interrupted": "已中断（应用退出）"][r.status] ?? r.status
+        print("\n\(r.name)  [\(state)]  ID \(r.id)  开始于 \(Fmt.startTime(r.startedAt))")
+        print("  " + r.summary)
+        guard !r.processes.isEmpty else { return }
+        print("  " + pad("进程", 34) + lpad("CPU 时间", 12) + lpad("能耗", 10) + lpad("内存峰值", 12))
+        for p in r.processes.prefix(8) {
+            print("  " + pad(p.name, 34) + lpad(Fmt.duration(p.cpuSeconds), 12) + lpad(Fmt.energy(p.energyJ), 10) + lpad(ByteFormat.short(p.peakMemoryBytes), 12))
+        }
     }
 
     private static func fail() -> Int32 {
@@ -139,22 +221,46 @@ enum CLI {
 enum Fetcher {
     private static let local = LocalSource()
 
-    static func appRunning() -> Bool { remote("/v1", timeout: 0.5) != nil }
+    static func appRunning() -> Bool { remote("GET", "/v1", timeout: 0.5) != nil }
 
     static func get(_ path: String) -> Data? {
-        if let d = remote(path, timeout: 8) { return d }
-        let (status, body) = APIRouter.handle(path: path, source: local)
+        let (status, body) = request("GET", path)
         return status == 200 ? body : nil
     }
 
-    private static func remote(_ path: String, timeout: TimeInterval) -> Data? {
+    /// (HTTP status, body). Errors come back as {"error": …} with a non-200 status.
+    static func request(_ method: String, _ path: String) -> (Int, Data) {
+        if let r = remote(method, path, timeout: 8) { return r }
+        if method == "POST", launchApp(), let r = remote(method, path, timeout: 8) { return r }
+        return APIRouter.handle(method: method, path: path, source: local)
+    }
+
+    /// Tracking lives in the app, so starting one opens PerfMonitor.app in the background.
+    private static func launchApp() -> Bool {
+        let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let app = exe.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        guard app.pathExtension == "app" else { return false }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        p.arguments = ["-g", app.path]
+        guard (try? p.run()) != nil else { return false }
+        p.waitUntilExit()
+        for _ in 0..<40 {
+            Thread.sleep(forTimeInterval: 0.25)
+            if appRunning() { Thread.sleep(forTimeInterval: 1.5); return true }   // let the first sample land
+        }
+        return false
+    }
+
+    private static func remote(_ method: String, _ path: String, timeout: TimeInterval) -> (Int, Data)? {
         guard let url = URL(string: "http://127.0.0.1:\(APIRouter.port)\(path)") else { return nil }
         var req = URLRequest(url: url)
+        req.httpMethod = method
         req.timeoutInterval = timeout
         let sem = DispatchSemaphore(value: 0)
-        var result: Data?
+        var result: (Int, Data)?
         URLSession.shared.dataTask(with: req) { data, resp, _ in
-            if (resp as? HTTPURLResponse)?.statusCode == 200 { result = data }
+            if let code = (resp as? HTTPURLResponse)?.statusCode { result = (code, data ?? Data()) }
             sem.signal()
         }.resume()
         sem.wait()

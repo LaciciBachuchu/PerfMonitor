@@ -315,7 +315,7 @@ enum Fmt {
     }
 
     static func energy(_ joules: Double) -> String {
-        joules >= 3600 ? String(format: "%.2f Wh", joules / 3600) : String(format: "%.0f J", joules)
+        joules >= 3600 ? String(format: "%.2f Wh", joules / 3600) : String(format: joules < 10 ? "%.2f J" : "%.0f J", joules)
     }
 
     private static let sameDay: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f }()

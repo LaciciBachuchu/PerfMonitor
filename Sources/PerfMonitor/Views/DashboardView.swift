@@ -240,6 +240,7 @@ struct WindowVisibilityReader: NSViewRepresentable {
 
 struct DashboardToolbar: ToolbarContent {
     @Environment(Monitor.self) private var monitor
+    @Environment(\.openWindow) private var openWindow
     let status: PowerStatus
     @Binding var showProcesses: Bool
     @State private var showInfo = false
@@ -295,6 +296,10 @@ struct DashboardToolbar: ToolbarContent {
             .menuStyle(.button)
             .glassButton()
             .help("采样间隔：\(Int(monitor.interval)) 秒")
+
+            Button { openWindow(id: "tracks") } label: { Label("性能追踪", systemImage: "waveform.path.ecg") }
+                .glassButton()
+                .help("追踪某个应用一段时间的性能占用")
 
             Toggle(isOn: $floating) { Label("悬浮窗", systemImage: "pip") }
                 .toggleStyle(.button).glassButton()

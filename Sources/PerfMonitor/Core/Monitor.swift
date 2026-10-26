@@ -9,6 +9,7 @@ struct Snapshot {
     var power = PowerSampler.Result()
     var processes: [ProcessStat] = []
     var apps: [ProcessStat] = []        // processes grouped by owning app
+    var processesFresh = false          // false when the process list was reused from an earlier tick
     var findings: [Finding] = []
     var powerMode = PowerMode.automatic
 
@@ -63,6 +64,7 @@ final class Engine {
             s.processes = p.processes
             s.apps = ProcessSampler.groupByApp(p.processes)
             lastProcessCPUW = p.cpuW
+            s.processesFresh = true
         } else {
             s.processes = last.processes
             s.apps = last.apps
@@ -122,6 +124,9 @@ final class Monitor {
     @ObservationIgnored var wantsAllSensors = false
     /// Per-process network (nettop) only runs while the network tab is shown.
     @ObservationIgnored var wantsNetwork = false
+    /// App and process tracking sessions (newest first), mirrored from `tracker` for the UI.
+    private(set) var tracks: [TrackSession] = []
+    @ObservationIgnored let tracking = Tracker()
 
     var findings: [Finding] { dashboard.findings }
 
@@ -136,6 +141,8 @@ final class Monitor {
     @ObservationIgnored private var latest = Snapshot()
 
     init() {
+        tracks = tracking.all()
+        tracking.onChange = { [weak self] list in self?.tracks = list }
         queue.async { [self] in
             engine = Engine()
             let hw = HardwareInfo.gather(io: engine.io)
@@ -188,6 +195,12 @@ final class Monitor {
         }
     }
 
+    // MARK: - Tracking (any thread)
+
+    func startTracking(target: String, seconds: Double?, network: Bool) -> Result<TrackSession, Tracker.StartError> {
+        tracking.start(target: target, seconds: seconds, network: network, snapshot: currentSnapshot())
+    }
+
     // MARK: - API access (any thread)
 
     func currentSnapshot() -> Snapshot {
@@ -218,9 +231,10 @@ final class Monitor {
     private func sampleOnce() {
         guard let engine else { return }
         engine.lightMode = !dashboardVisible
-        engine.networkEnabled = wantsNetwork && dashboardVisible
+        engine.networkEnabled = (wantsNetwork && dashboardVisible) || tracking.wantsNetwork
         let s = engine.sample()
         lock.lock(); latest = s; lock.unlock()
+        if s.processesFresh { tracking.ingest(s) }
 
         let point = HistoryPoint(
             id: s.time, cpu: s.system.cpuTotal, gpu: s.gpuUtil,

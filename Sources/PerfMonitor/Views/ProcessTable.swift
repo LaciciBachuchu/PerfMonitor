@@ -242,6 +242,7 @@ struct ProcessTableActions {
     var open: (ProcessStat) -> Void
     var sample: (ProcessStat) -> Void
     var confirmKill: (ProcessStat) -> Void
+    var track: (ProcessStat) -> Void
 }
 
 /// AppKit outline view with fixed row heights: a reload only re-renders visible cells, unlike
@@ -607,6 +608,7 @@ struct ProcessTableView: NSViewRepresentable {
             }
             add("显示详情…") { [weak self] in self?.actions?.open(first) }
             add("采样进程…") { [weak self] in self?.actions?.sample(first) }
+            add("追踪性能…") { [weak self] in self?.actions?.track(first) }
             menu.addItem(.separator())
             add("限制到能效核（后台优先级）") { ProcessActions.setBackground(pids, true) }
             add("取消限制") { ProcessActions.setBackground(pids, false) }

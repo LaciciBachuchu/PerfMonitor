@@ -46,6 +46,11 @@ struct PerfMonitorApp: App {
         .defaultSize(width: 1320, height: 900)
         .windowToolbarStyle(.unified(showsTitle: true))
 
+        Window("性能追踪", id: "tracks") {
+            TrackingView().environment(delegate.monitor)
+        }
+        .defaultSize(width: 1000, height: 700)
+
         WindowGroup("进程详情", for: InspectorTarget.self) { $target in
             if let target {
                 ProcessInspector(target: target).environment(delegate.monitor)
