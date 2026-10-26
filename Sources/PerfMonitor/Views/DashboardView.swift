@@ -6,6 +6,7 @@ struct DashboardView: View {
     @AppStorage("showProcesses") private var showProcesses = true
     @AppStorage("processPanelWidth") private var panelWidth = 560.0
     @State private var dragStart: Double?
+    @State private var hoverDivider = false
     @State private var status = PowerStatus()
 
     var body: some View {
@@ -15,13 +16,17 @@ struct DashboardView: View {
             if monitor.dashboardActive {
                 let pw = min(max(panelWidth, 380), max(g.size.width - 520, 380))
                 HStack(spacing: 0) {
-                    DashboardContent(status: status)
-                        .frame(width: showProcesses ? max(g.size.width - pw - 9, 0) : g.size.width, height: g.size.height)
+                    // Every gap — between cards, around the process panel, at the window edges — is 10 pt.
+                    DashboardContent(status: status, trailingInset: showProcesses ? 0 : 10)
+                        .frame(width: showProcesses ? max(g.size.width - pw - 10, 0) : g.size.width, height: g.size.height)
                     if showProcesses {
-                        Capsule().fill(.secondary.opacity(0.35)).frame(width: 3, height: 36)
-                            .frame(width: 9, height: g.size.height)
+                        Capsule().fill(.secondary.opacity(hoverDivider ? 0.5 : 0)).frame(width: 3, height: 36)
+                            .frame(width: 10, height: g.size.height)
                             .contentShape(Rectangle())
-                            .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+                            .onHover { inside in
+                                hoverDivider = inside
+                                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                            }
                             .gesture(DragGesture(minimumDistance: 1)
                                 .onChanged { v in
                                     let start = dragStart ?? pw
@@ -30,6 +35,7 @@ struct DashboardView: View {
                                 }
                                 .onEnded { _ in dragStart = nil })
                         ProcessPanel()
+                            .padding([.vertical, .trailing], 10)
                             .frame(width: pw, height: g.size.height)
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
@@ -82,6 +88,7 @@ final class PowerStatus {
 private struct DashboardContent: View {
     @Environment(Monitor.self) private var monitor
     let status: PowerStatus
+    var trailingInset: CGFloat = 10
 
     var body: some View {
         GeometryReader { g in
@@ -120,7 +127,8 @@ private struct DashboardContent: View {
                 }
             }
         }
-        .padding(12)
+        .padding([.leading, .vertical], 10)
+        .padding(.trailing, trailingInset)
     }
 
     /// A row of equal-height cards; spare window height flows into their charts.

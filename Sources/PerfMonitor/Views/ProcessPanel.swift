@@ -84,8 +84,6 @@ struct ProcessPanel: View {
                 }
             }
             .padding(10)
-            .cardBackground(cornerRadius: 18)
-            .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 6)
 
             ProcessTableView(
                 rows: rows, tab: tableTab ?? tab, tree: mode == .tree && query.isEmpty,
@@ -96,11 +94,13 @@ struct ProcessPanel: View {
                 )
             )
 
+            Divider().opacity(0.5)
             SummaryBar(tab: tableTab ?? tab)
-                .padding(.horizontal, 12).padding(.vertical, 7)
-                .cardBackground(cornerRadius: 14)
-                .padding(8)
+                .padding(.horizontal, 12).padding(.vertical, 8)
         }
+        // One glass card, like the dashboard cards, so the spacing around it matches theirs.
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .cardBackground(cornerRadius: 16)
         .onAppear { monitor.wantsNetwork = tab == .network }
         .onChange(of: tab) {
             monitor.wantsNetwork = tab == .network
