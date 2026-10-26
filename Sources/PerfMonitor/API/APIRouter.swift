@@ -60,7 +60,7 @@ enum APIRouter {
         "/v1/findings": "只返回瓶颈诊断",
         "/v1/tracks": "性能追踪记录列表（每条含汇总）",
         "/v1/tracks/{id}": "一条追踪记录的汇总与分进程明细。参数 samples=1 附带时间序列",
-        "POST /v1/tracks/start": "开始追踪一个应用或进程。参数 target=名称|PID|.app 路径，minutes=N（到时自动停止，可省略），network=1",
+        "POST /v1/tracks/start": "开始追踪一个应用或进程。参数 target=名称|PID|.app 路径，minutes=N（到时自动停止，可省略），network=0 不记录网络",
         "POST /v1/tracks/{id}/stop": "停止追踪（id 也可以写应用名，停止该应用所有进行中的追踪）",
     ]
 
@@ -119,7 +119,7 @@ extension APIRouter {
                 return error(400, "缺少 target 参数（应用名、进程名、PID 或 .app 路径）")
             }
             let seconds = Double(q["minutes"] ?? "").map { $0 * 60 } ?? Double(q["seconds"] ?? "")
-            let network = ["1", "true", "yes"].contains(q["network"] ?? "")
+            let network = !["0", "false", "no"].contains(q["network"] ?? "")
             switch source.startTracking(target: target, seconds: seconds, network: network) {
             case .success(let s): return (200, JSON.encode(TrackReport(s, includeSamples: false)))
             case .failure(let e): return error(400, e.description)

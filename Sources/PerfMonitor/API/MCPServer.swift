@@ -30,11 +30,11 @@ enum MCPServer {
         ],
         [
             "name": "start_tracking",
-            "description": "开始在后台追踪某个应用（含它的所有 Helper 进程）或单个进程一段时间的性能占用：CPU、内存、CPU 能耗、GPU、磁盘（可选网络）。应用还没打开也可以先开始，打开后自动计入。返回记录 ID；之后用 get_tracking 查看。需要 PerfMonitor.app，未运行会自动在后台启动。",
+            "description": "开始在后台追踪某个应用（含它的所有 Helper 进程）或单个进程一段时间的性能占用：CPU、内存、CPU 能耗、GPU、磁盘和网络收发（每个子进程分别统计）。应用还没打开也可以先开始，打开后自动计入。返回记录 ID；之后用 get_tracking 查看。需要 PerfMonitor.app，未运行会自动在后台启动。",
             "inputSchema": ["type": "object", "required": ["target"], "properties": [
                 "target": ["type": "string", "description": "应用名（如 ChatGPT、Google Chrome）、进程名、PID 或 .app 路径"],
                 "minutes": ["type": "number", "description": "多少分钟后自动停止；省略则一直记录到 stop_tracking"],
-                "network": ["type": "boolean", "description": "同时记录网络流量（会多一点开销），默认 false"],
+                "network": ["type": "boolean", "description": "记录每个进程的网络收发，默认 true；设 false 可省一点开销"],
             ]],
         ],
         [
@@ -49,7 +49,7 @@ enum MCPServer {
         ],
         [
             "name": "get_tracking",
-            "description": "一条追踪记录的详细汇总：时长、平均与峰值 CPU、占整机 CPU 比例、平均/峰值内存、CPU 能耗（J/Wh）与占整机能耗比例、GPU、磁盘读写、各子进程分别用了多少。include_samples=true 时附带时间序列。",
+            "description": "一条追踪记录的详细汇总：时长、平均与峰值 CPU、占整机 CPU 比例、平均/峰值内存、CPU 能耗（J/Wh）与占整机能耗比例、GPU、磁盘读写、网络下载/上传与速率、各子进程分别用了多少（CPU/能耗/内存/GPU/磁盘/网络）。include_samples=true 时附带时间序列。",
             "inputSchema": ["type": "object", "required": ["id"], "properties": [
                 "id": ["type": "string"],
                 "include_samples": ["type": "boolean"],
@@ -93,7 +93,7 @@ enum MCPServer {
                 case "start_tracking":
                     "/v1/tracks/start?target=\(enc(a["target"] as? String ?? ""))"
                         + ((a["minutes"] as? Double).map { "&minutes=\($0)" } ?? "")
-                        + ((a["network"] as? Bool ?? false) ? "&network=1" : "")
+                        + ((a["network"] as? Bool ?? true) ? "" : "&network=0")
                 case "stop_tracking": "/v1/tracks/\(enc(a["id"] as? String ?? ""))/stop"
                 case "list_trackings": "/v1/tracks"
                 case "get_tracking": "/v1/tracks/\(enc(a["id"] as? String ?? ""))" + ((a["include_samples"] as? Bool ?? false) ? "?samples=1" : "")

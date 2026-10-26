@@ -7,7 +7,7 @@ struct TrackingView: View {
     @State private var selection: String?
     @State private var target = ""
     @State private var minutes = 30.0
-    @State private var network = false
+    @State private var network = true
     @State private var error: String?
 
     static let durations: [(String, Double)] = [("5 分钟", 5), ("15 分钟", 15), ("30 分钟", 30), ("1 小时", 60), ("2 小时", 120), ("8 小时", 480), ("一直记录", 0)]
@@ -58,7 +58,7 @@ struct TrackingView: View {
                     ForEach(Self.durations, id: \.1) { Text($0.0).tag($0.1) }
                 }
                 .labelsHidden().fixedSize()
-                Toggle("网络", isOn: $network).toggleStyle(.checkbox).help("同时记录网络流量（多一点开销）")
+                Toggle("网络", isOn: $network).toggleStyle(.checkbox).help("记录每个进程的网络收发（通过 nettop，每次采样约 30 毫秒 CPU）")
                 Spacer()
                 Button("开始", action: start)
                     .buttonStyle(.borderedProminent)
@@ -158,16 +158,25 @@ private struct TrackDetail: View {
                     tile("内存", ByteFormat.short(r.avgMemoryBytes), "峰值 " + ByteFormat.short(r.peakMemoryBytes))
                     tile("CPU 能耗", Fmt.energy(r.energyJ), (r.powerEstimated ? "≈" : "") + String(format: "平均 %.2f W", r.avgPowerW))
                     tile("占整机能耗", String(format: "%.1f%%", r.shareOfSystemEnergyPct), String(format: "整机平均 %.1f W", r.systemAvgPowerW))
-                    tile("GPU", String(format: "%.1f%%", r.avgGpuPct), "GPU 时间 " + Fmt.duration(r.gpuSeconds))
+                    tile("GPU", String(format: "%.1f%%", r.avgGpuPct), String(format: "峰值 %.0f%% · GPU 时间 ", r.peakGpuPct ?? 0) + Fmt.duration(r.gpuSeconds))
                     tile("磁盘", ByteFormat.short(r.diskReadBytes + r.diskWrittenBytes), "读 \(ByteFormat.short(r.diskReadBytes)) · 写 \(ByteFormat.short(r.diskWrittenBytes))")
-                    if let n = r.networkBytes { tile("网络", ByteFormat.short(n), "收发合计") }
+                    if let i = r.networkInBytes, let o = r.networkOutBytes {
+                        tile("网络", ByteFormat.short(i + o), "↓ \(ByteFormat.short(i)) · ↑ \(ByteFormat.short(o))")
+                        tile("网络速率", ByteFormat.rate(r.avgNetworkBps ?? 0), "峰值 " + ByteFormat.rate(r.peakNetworkBps ?? 0))
+                    } else if let n = r.networkBytes {
+                        tile("网络", ByteFormat.short(n), "收发合计")
+                    } else {
+                        tile("网络", "未记录", "开始时没有勾选「网络」")
+                    }
                     tile("空闲唤醒", String(format: "%.0f 次/秒", r.idleWakeupsPerSec), "越低越省电")
                 }
 
                 chart("CPU", unit: "%", color: .blue, samples.map(\.cpuPct))
                 chart("内存", unit: "GB", color: .green, samples.map { $0.memoryBytes / 1_073_741_824 })
                 chart("CPU 功耗", unit: "W", color: .orange, samples.map(\.powerW))
-                if r.gpuSeconds > 0.5 { chart("GPU", unit: "%", color: .purple, samples.map(\.gpuPct)) }
+                chart("GPU", unit: "%", color: .purple, samples.map(\.gpuPct))
+                if session.includeNetwork { chart("网络", unit: "KB/s", color: .teal, samples.map { $0.netBps / 1024 }) }
+                chart("磁盘", unit: "MB/s", color: .brown, samples.map { $0.diskBps / 1_048_576 })
 
                 if !r.processes.isEmpty { parts(r) }
             }
@@ -236,7 +245,8 @@ private struct TrackDetail: View {
             Grid(alignment: .trailing, horizontalSpacing: 16, verticalSpacing: 4) {
                 GridRow {
                     Text("进程").gridColumnAlignment(.leading)
-                    Text("CPU 时间"); Text("占比"); Text("能耗"); Text("内存峰值")
+                    Text("CPU 时间"); Text("占比"); Text("能耗"); Text("内存峰值"); Text("GPU 时间"); Text("磁盘")
+                    if r.networkInBytes != nil { Text("网络 ↓"); Text("网络 ↑") }
                 }
                 .font(.caption).foregroundStyle(.secondary)
                 ForEach(r.processes, id: \.name) { p in
@@ -246,6 +256,9 @@ private struct TrackDetail: View {
                         Text(r.cpuSeconds > 0 ? String(format: "%.0f%%", p.cpuSeconds / r.cpuSeconds * 100) : "—")
                         Text(Fmt.energy(p.energyJ))
                         Text(ByteFormat.short(p.peakMemoryBytes))
+                        Text(Fmt.duration(p.gpuSeconds))
+                        Text(ByteFormat.short(p.diskBytes))
+                        if let i = p.networkInBytes, let o = p.networkOutBytes { Text(ByteFormat.short(i)); Text(ByteFormat.short(o)) }
                     }
                     .font(.system(size: 12.5)).monospacedDigit()
                 }

@@ -11,7 +11,7 @@ enum CLI {
       perfmon sensors [--json]                 全部温度/电源传感器
       perfmon hardware [--json]                硬件信息
       perfmon watch [--interval 2]             持续刷新状态
-      perfmon track start <应用名|PID> [--minutes N] [--network] [--wait]
+      perfmon track start <应用名|PID> [--minutes N] [--no-network] [--wait]
                                                开始追踪某个应用一段时间的性能占用（--wait 等到结束并打印汇总）
       perfmon track stop <记录ID|应用名>       停止追踪并打印汇总
       perfmon track list [--json]              全部追踪记录
@@ -107,11 +107,11 @@ enum CLI {
 
         switch sub {
         case "start":
-            guard let target = positional else { print("用法: perfmon track start <应用名|PID> [--minutes N] [--network] [--wait]"); return 2 }
+            guard let target = positional else { print("用法: perfmon track start <应用名|PID> [--minutes N] [--no-network] [--wait]"); return 2 }
             var path = "/v1/tracks/start?target=\(enc(target))"
             if let m = opt("--minutes") { path += "&minutes=\(m)" }
             if let sec = opt("--seconds") { path += "&seconds=\(sec)" }
-            if rest.contains("--network") { path += "&network=1" }
+            if rest.contains("--no-network") { path += "&network=0" }
             let (status, data) = Fetcher.request("POST", path)
             guard status == 200, let r = decode(TrackReport.self, data) else { return show(status, data) }
             guard rest.contains("--wait") else {
@@ -150,9 +150,13 @@ enum CLI {
         print("\n\(r.name)  [\(state)]  ID \(r.id)  开始于 \(Fmt.startTime(r.startedAt))")
         print("  " + r.summary)
         guard !r.processes.isEmpty else { return }
-        print("  " + pad("进程", 34) + lpad("CPU 时间", 12) + lpad("能耗", 10) + lpad("内存峰值", 12))
+        let net = r.networkInBytes != nil
+        print("  " + pad("进程", 30) + lpad("CPU 时间", 10) + lpad("能耗", 10) + lpad("内存峰值", 10) + lpad("GPU 时间", 10) + lpad("磁盘", 9)
+              + (net ? lpad("网络↓", 10) + lpad("网络↑", 10) : ""))
         for p in r.processes.prefix(8) {
-            print("  " + pad(p.name, 34) + lpad(Fmt.duration(p.cpuSeconds), 12) + lpad(Fmt.energy(p.energyJ), 10) + lpad(ByteFormat.short(p.peakMemoryBytes), 12))
+            print("  " + pad(p.name, 30) + lpad(Fmt.duration(p.cpuSeconds), 10) + lpad(Fmt.energy(p.energyJ), 10) + lpad(ByteFormat.short(p.peakMemoryBytes), 10)
+                  + lpad(Fmt.duration(p.gpuSeconds), 10) + lpad(ByteFormat.short(p.diskBytes), 9)
+                  + (net ? lpad(ByteFormat.short(p.networkInBytes ?? 0), 10) + lpad(ByteFormat.short(p.networkOutBytes ?? 0), 10) : ""))
         }
     }
 

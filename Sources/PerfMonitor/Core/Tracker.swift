@@ -20,6 +20,25 @@ struct TrackSession: Codable, Identifiable, Hashable {
         var cpuSeconds = 0.0
         var energyJ = 0.0
         var peakMemoryBytes = 0.0
+        var gpuSeconds = 0.0
+        var diskBytes = 0.0
+        var netInBytes = 0.0
+        var netOutBytes = 0.0
+
+        init(name: String) { self.name = name }
+
+        // Sessions saved by older versions lack the later fields.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = try c.decode(String.self, forKey: .name)
+            cpuSeconds = try c.decodeIfPresent(Double.self, forKey: .cpuSeconds) ?? 0
+            energyJ = try c.decodeIfPresent(Double.self, forKey: .energyJ) ?? 0
+            peakMemoryBytes = try c.decodeIfPresent(Double.self, forKey: .peakMemoryBytes) ?? 0
+            gpuSeconds = try c.decodeIfPresent(Double.self, forKey: .gpuSeconds) ?? 0
+            diskBytes = try c.decodeIfPresent(Double.self, forKey: .diskBytes) ?? 0
+            netInBytes = try c.decodeIfPresent(Double.self, forKey: .netInBytes) ?? 0
+            netOutBytes = try c.decodeIfPresent(Double.self, forKey: .netOutBytes) ?? 0
+        }
     }
 
     struct Totals: Codable, Hashable {
@@ -31,6 +50,10 @@ struct TrackSession: Codable, Identifiable, Hashable {
         var diskReadBytes = 0.0
         var diskWrittenBytes = 0.0
         var netBytes = 0.0
+        var netInBytes: Double?     // nil in sessions saved before the split
+        var netOutBytes: Double?
+        var peakGpuPct: Double?
+        var peakNetBps: Double?
         var peakCpuPct = 0.0
         var peakMemoryBytes = 0.0
         var memoryByteSeconds = 0.0 // for the running average
@@ -48,7 +71,7 @@ struct TrackSession: Codable, Identifiable, Hashable {
     var startedAt: Date
     var endedAt: Date?
     var plannedSeconds: Double?     // auto-stop after this long
-    var includeNetwork = false
+    var includeNetwork = true
     var interrupted = false         // the app quit before the session was stopped
     var cores: Int
     var totals = Totals()
@@ -212,8 +235,10 @@ final class Tracker {
         }
         let procs = snap.processes.filter(s.matches)
         var sample = TrackSession.Sample(t: snap.time, cpuPct: 0, memoryBytes: 0, powerW: 0, gpuPct: 0, diskBps: 0, netBps: 0, processes: procs.count)
-        var wakeups = 0.0
+        var wakeups = 0.0, netIn = 0.0, netOut = 0.0
         for p in procs {
+            netIn += p.netInBps ?? 0
+            netOut += p.netOutBps ?? 0
             sample.cpuPct += p.cpu
             sample.memoryBytes += p.memory
             sample.powerW += p.powerW ?? 0
@@ -233,23 +258,28 @@ final class Tracker {
             t.diskReadBytes += procs.reduce(0) { $0 + $1.diskReadBps } * dt
             t.diskWrittenBytes += procs.reduce(0) { $0 + $1.diskWriteBps } * dt
             t.netBytes += sample.netBps * dt
+            t.netInBytes = (t.netInBytes ?? 0) + netIn * dt
+            t.netOutBytes = (t.netOutBytes ?? 0) + netOut * dt
             t.memoryByteSeconds += sample.memoryBytes * dt
             t.idleWakeups += wakeups * dt
             t.systemEnergyJ += snap.totalW * dt
             t.systemCpuSeconds += snap.system.cpuTotal * Double(s.cores) * dt
             for p in procs {
-                if let i = s.parts.firstIndex(where: { $0.name == p.name }) {
-                    s.parts[i].cpuSeconds += p.cpu / 100 * dt
-                    s.parts[i].energyJ += (p.powerW ?? 0) * dt
-                    s.parts[i].peakMemoryBytes = max(s.parts[i].peakMemoryBytes, p.memory)
-                } else {
-                    s.parts.append(.init(name: p.name, cpuSeconds: p.cpu / 100 * dt, energyJ: (p.powerW ?? 0) * dt, peakMemoryBytes: p.memory))
-                }
+                let i = s.parts.firstIndex { $0.name == p.name } ?? { s.parts.append(.init(name: p.name)); return s.parts.count - 1 }()
+                s.parts[i].cpuSeconds += p.cpu / 100 * dt
+                s.parts[i].energyJ += (p.powerW ?? 0) * dt
+                s.parts[i].peakMemoryBytes = max(s.parts[i].peakMemoryBytes, p.memory)
+                s.parts[i].gpuSeconds += (p.gpu ?? 0) / 100 * dt
+                s.parts[i].diskBytes += p.diskBps * dt
+                s.parts[i].netInBytes += (p.netInBps ?? 0) * dt
+                s.parts[i].netOutBytes += (p.netOutBps ?? 0) * dt
             }
             s.parts.sort { $0.cpuSeconds > $1.cpuSeconds }
         }
         t.peakCpuPct = max(t.peakCpuPct, sample.cpuPct)
         t.peakMemoryBytes = max(t.peakMemoryBytes, sample.memoryBytes)
+        t.peakGpuPct = max(t.peakGpuPct ?? 0, sample.gpuPct)
+        t.peakNetBps = max(t.peakNetBps ?? 0, sample.netBps)
         s.totals = t
         s.samples.append(sample)
         if s.samples.count > maxSamples { s.samples = halve(s.samples) }
@@ -302,7 +332,16 @@ final class Tracker {
 
 /// Agent-facing view of a session: derived averages and shares spelled out.
 struct TrackReport: Codable {
-    struct Part: Codable { var name: String; var cpuSeconds: Double; var energyJ: Double; var peakMemoryBytes: Double }
+    struct Part: Codable {
+        var name: String
+        var cpuSeconds: Double
+        var energyJ: Double
+        var peakMemoryBytes: Double
+        var gpuSeconds: Double
+        var diskBytes: Double
+        var networkInBytes: Double?
+        var networkOutBytes: Double?
+    }
     var id: String
     var target: String
     var name: String
@@ -332,6 +371,11 @@ struct TrackReport: Codable {
     var diskReadBytes: Double
     var diskWrittenBytes: Double
     var networkBytes: Double?
+    var networkInBytes: Double?
+    var networkOutBytes: Double?
+    var avgNetworkBps: Double?
+    var peakNetworkBps: Double?
+    var peakGpuPct: Double?
     var idleWakeupsPerSec: Double
     var systemAvgPowerW: Double
     var processes: [Part]
@@ -363,9 +407,19 @@ struct TrackReport: Codable {
         diskReadBytes = t.diskReadBytes
         diskWrittenBytes = t.diskWrittenBytes
         networkBytes = s.includeNetwork ? t.netBytes : nil
+        networkInBytes = s.includeNetwork ? t.netInBytes : nil
+        networkOutBytes = s.includeNetwork ? t.netOutBytes : nil
+        avgNetworkBps = s.includeNetwork ? t.netBytes / dur : nil
+        peakNetworkBps = s.includeNetwork ? t.peakNetBps : nil
+        peakGpuPct = t.peakGpuPct
         idleWakeupsPerSec = t.idleWakeups / dur
         systemAvgPowerW = t.systemEnergyJ / dur
-        processes = s.parts.prefix(12).map { Part(name: $0.name, cpuSeconds: $0.cpuSeconds, energyJ: $0.energyJ, peakMemoryBytes: $0.peakMemoryBytes) }
+        let net = s.includeNetwork
+        processes = s.parts.prefix(12).map {
+            Part(name: $0.name, cpuSeconds: $0.cpuSeconds, energyJ: $0.energyJ, peakMemoryBytes: $0.peakMemoryBytes,
+                 gpuSeconds: $0.gpuSeconds, diskBytes: $0.diskBytes,
+                 networkInBytes: net ? $0.netInBytes : nil, networkOutBytes: net ? $0.netOutBytes : nil)
+        }
         samples = includeSamples ? s.samples : nil
 
         let mins = Int(dur / 60), secs = Int(dur) % 60
@@ -375,9 +429,11 @@ struct TrackReport: Codable {
         line += String(format: "平均占用 CPU %.1f%%（单核为 100%%，占整机算力 %.1f%%，峰值 %.0f%%），", avgCpuPct, shareOfMachineCpuPct, peakCpuPct)
         line += "内存平均 \(ByteFormat.short(avgMemoryBytes))、峰值 \(ByteFormat.short(peakMemoryBytes))，"
         line += String(format: "CPU 能耗 %@（平均 %.2f W，约占整机能耗 %.1f%%）", Fmt.energy(energyJ), avgPowerW, shareOfSystemEnergyPct)
-        if gpuSeconds > 0.5 { line += String(format: "，GPU 平均 %.1f%%", avgGpuPct) }
+        line += String(format: "，GPU 平均 %.1f%%（峰值 %.0f%%）", avgGpuPct, peakGpuPct ?? 0)
         line += "，磁盘读 \(ByteFormat.short(diskReadBytes))、写 \(ByteFormat.short(diskWrittenBytes))"
-        if let n = networkBytes { line += "，网络 \(ByteFormat.short(n))" }
+        if let i = networkInBytes, let o = networkOutBytes {
+            line += "，网络下载 \(ByteFormat.short(i))、上传 \(ByteFormat.short(o))（平均 \(ByteFormat.rate(avgNetworkBps ?? 0))）"
+        } else if let n = networkBytes { line += "，网络 \(ByteFormat.short(n))" }
         summary = line + "。"
     }
 }

@@ -53,7 +53,7 @@ open PerfMonitor.app
 - **性能追踪**：在后台记录某个应用一段时间里到底用了多少资源，比如「ChatGPT 开一下午，占了我多少 CPU 和电」。
   - 入口：工具栏的波形按钮、菜单栏的「性能追踪」，或在进程列表里右键一个应用选「追踪性能…」。
   - 输入应用名、进程名或 PID，选时长（5 分钟到 8 小时，或一直记录到手动停止）。应用的所有 Helper 进程会合并统计；应用还没打开也可以先开始，打开后自动计入。
-  - 结果：平均和峰值 CPU、占整机 CPU 的比例、CPU 时间、平均和峰值内存、CPU 能耗及占整机能耗的比例、GPU、磁盘读写、可选的网络流量、空闲唤醒，以及各子进程分别用了多少，配 CPU / 内存 / 功耗曲线。
+  - 结果：平均和峰值 CPU、占整机 CPU 的比例、CPU 时间、平均和峰值内存、CPU 能耗及占整机能耗的比例、GPU（平均和峰值）、磁盘读写、网络下载 / 上传和速率、空闲唤醒；每个子进程的 CPU、能耗、内存、GPU、磁盘、网络也分别列出，配 CPU / 内存 / 功耗 / GPU / 网络 / 磁盘曲线。
   - 记录保存在 `~/Library/Application Support/PerfMonitor/tracks/`。PerfMonitor 退出时正在进行的追踪会标为「已中断」。
   - 能耗只算 CPU 部分（内核按进程记的能耗），不含屏幕、GPU 和内存。
 - **菜单栏**：常驻显示 SoC 温度和整机功耗；点开后可以看占用最高的进程，也能开关悬浮窗。
@@ -76,7 +76,7 @@ perfmon sensors
 perfmon hardware
 perfmon watch
 
-perfmon track start ChatGPT --minutes 30       # 开始追踪，30 分钟后自动停止
+perfmon track start ChatGPT --minutes 30       # 开始追踪，30 分钟后自动停止（--no-network 不记录网络）
 perfmon track start ChatGPT --minutes 10 --wait  # 等到结束，直接打印汇总
 perfmon track list
 perfmon track show <记录ID> [--json] [--samples]
@@ -152,7 +152,7 @@ macOS 27 把 IOReport “Energy Model” 组里所有 mJ 单位的计数器（CP
 ## 已知限制
 
 - 系统和其他用户的进程（例如 WindowServer）不允许普通权限读取详细信息。它们的 CPU 时间和常驻内存改由 Apple 自带的 `ps` 获取；线程数、空闲唤醒、磁盘读写、打开的文件和采样只能看你自己的进程。
-- 每个进程的网络流量来自 `nettop`，只在打开「网络」页时采集，每次约耗 30 ms CPU。
+- 每个进程的网络流量来自 `nettop`，只在打开「网络」页或有追踪记录网络时采集，每次约耗 30 ms CPU。
 - 活动监视器里的「缓存」页（内容缓存服务）、Spindump、系统诊断、Spotlight 诊断没有集成：前者需要开启共享服务，后三者需要管理员权限，并且是给 Apple 或开发者排查问题用的诊断包。
 
 - 传感器标注中带「*」的，是根据数值比对推测出来的。

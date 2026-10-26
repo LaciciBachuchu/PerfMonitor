@@ -100,6 +100,8 @@ final class ProcessSampler {
             windowed = Set(NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }.map(\.processIdentifier))
         }
         let gpuTimes = gpu.sample(dt: dt)
+        // Counters from a run long ago would turn into a burst of traffic over this short dt.
+        if !networkEnabled { net.reset() }
         let netRates = networkEnabled ? net.sample(dt: dt) : [:]
 
         var next: [pid_t: Prev] = [:]
@@ -394,6 +396,8 @@ final class GPUClientSampler {
 /// so it only runs while a view asks for it.
 final class NetworkSampler {
     private var prev: [pid_t: (Double, Double)] = [:]
+
+    func reset() { prev = [:] }
 
     func sample(dt: Double) -> [pid_t: (inBps: Double, outBps: Double, inTotal: Double, outTotal: Double)] {
         let p = Process()
