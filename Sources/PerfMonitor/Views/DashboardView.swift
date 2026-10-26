@@ -94,63 +94,76 @@ private struct DashboardContent: View {
         GeometryReader { g in
             let columns = g.size.width >= 1050 ? 3 : 2
             ScrollView {
-                FillOrGrow(minHeight: g.size.height) {
-                    content(columns: columns)
+                GlassGroup {
+                    FillColumn(spacing: 10, minHeight: g.size.height - 20) {
+                        if status.busy || status.message != nil {
+                            Label(status.busy ? "请在系统授权窗口中输入 Mac 登录密码…" : status.message!,
+                                  systemImage: status.busy ? "lock" : "exclamationmark.triangle")
+                                .font(.caption).foregroundStyle(status.busy ? .orange : .red)
+                        }
+                        FindingsView(findings: monitor.findings)
+                        if columns == 3 {
+                            row { ThermalCard(); PowerCard(); ChargingCard() }
+                            row { CPUCard(); GPUCard(); MemoryCard() }
+                        } else {
+                            row { ThermalCard(); PowerCard() }
+                            row { CPUCard(); GPUCard() }
+                            row { MemoryCard(); ChargingCard() }
+                        }
+                        HardwareCard()
+                    }
                 }
+                .padding([.leading, .vertical], 10)
+                .padding(.trailing, trailingInset)
                 .frame(width: g.size.width)
             }
             .scrollBounceBehavior(.basedOnSize)
         }
     }
 
-    @ViewBuilder
-    private func content(columns: Int) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if status.busy || status.message != nil {
-                Label(status.busy ? "请在系统授权窗口中输入 Mac 登录密码…" : status.message!,
-                      systemImage: status.busy ? "lock" : "exclamationmark.triangle")
-                    .font(.caption).foregroundStyle(status.busy ? .orange : .red)
-            }
-            FindingsView(findings: monitor.findings)
-                .fixedSize(horizontal: false, vertical: true)
-            GlassGroup {
-                VStack(spacing: 10) {
-                    if columns == 3 {
-                        row { ThermalCard(); PowerCard(); ChargingCard() }
-                        row { CPUCard(); GPUCard(); MemoryCard() }
-                    } else {
-                        row { ThermalCard(); PowerCard() }
-                        row { CPUCard(); GPUCard() }
-                        row { MemoryCard(); ChargingCard() }
-                    }
-                    HardwareCard().fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-        .padding([.leading, .vertical], 10)
-        .padding(.trailing, trailingInset)
-    }
-
-    /// A row of equal-height cards; spare window height flows into their charts.
+    /// A row of equal-height cards that takes a share of any spare window height.
     private func row<C: View>(@ViewBuilder _ cards: () -> C) -> some View {
         HStack(alignment: .top, spacing: 10) { cards() }
+            .layoutValue(key: Grows.self, value: true)
     }
 }
 
-/// Lays its content out at its natural height, or at `minHeight` if that's taller, so flexible
-/// children fill the window when there's room and the enclosing ScrollView scrolls when there isn't.
-struct FillOrGrow: Layout {
-    let minHeight: CGFloat
+/// Marks a FillColumn child that may take extra height.
+struct Grows: LayoutValueKey {
+    static let defaultValue = false
+}
+
+/// Vertical stack where every child first gets the height its content needs, and only the
+/// height left over (when the window is taller than the content) is split among `Grows` rows.
+/// A plain VStack splits space evenly between flexible rows, so a row with more content than
+/// its share overflowed and its cards ended at different heights.
+struct FillColumn: Layout {
+    var spacing: CGFloat = 10
+    var minHeight: CGFloat = 0
+
+    private func ideals(_ subviews: Subviews, width: CGFloat) -> [CGFloat] {
+        subviews.map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)).height }
+    }
+
+    private func gaps(_ n: Int) -> CGFloat { spacing * CGFloat(max(n - 1, 0)) }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        guard let child = subviews.first else { return .zero }
-        let width = proposal.width ?? child.sizeThatFits(.unspecified).width
-        let natural = child.sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+        let width = proposal.width ?? 800
+        let natural = ideals(subviews, width: width).reduce(0, +) + gaps(subviews.count)
         return CGSize(width: width, height: max(natural, minHeight))
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+        let heights = ideals(subviews, width: bounds.width)
+        let growers = subviews.indices.filter { subviews[$0][Grows.self] }
+        let spare = max(0, bounds.height - heights.reduce(0, +) - gaps(subviews.count))
+        let extra = growers.isEmpty ? 0 : spare / CGFloat(growers.count)
+        var y = bounds.minY
+        for i in subviews.indices {
+            let h = heights[i] + (growers.contains(i) ? extra : 0)
+            subviews[i].place(at: CGPoint(x: bounds.minX, y: y), proposal: ProposedViewSize(width: bounds.width, height: h))
+            y += h + spacing
+        }
     }
 }
 
