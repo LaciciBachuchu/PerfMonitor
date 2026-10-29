@@ -189,6 +189,7 @@ struct GlassTabBar<T: Hashable & Identifiable>: View {
     @Binding var selection: T
     @State private var shown: T?
     @Namespace private var ns
+    @AppStorage(Look.glassKey) private var glass = false
 
     var body: some View {
         let current = shown ?? selection
@@ -223,7 +224,7 @@ struct GlassTabBar<T: Hashable & Identifiable>: View {
 
     @ViewBuilder
     private var highlight: some View {
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, *), glass {
             Capsule().fill(.clear)
                 .glassEffect(.regular.tint(Color.accentColor.opacity(0.25)).interactive(), in: Capsule())
         } else {

@@ -177,8 +177,17 @@ struct FillColumn: Layout {
     }
 }
 
+/// Window background: the blurred desktop with glass effects on, the plain window colour off.
+struct WindowBackdrop: View {
+    @AppStorage(Look.glassKey) private var glass = false
+
+    var body: some View {
+        if glass { BehindWindowBlur() } else { Color(nsColor: .windowBackgroundColor) }
+    }
+}
+
 /// The desktop shows through a blurred window background, like Control Center and widgets.
-struct WindowBackdrop: NSViewRepresentable {
+private struct BehindWindowBlur: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let v = NSVisualEffectView()
         v.material = .underWindowBackground
@@ -192,9 +201,10 @@ struct WindowBackdrop: NSViewRepresentable {
 
 /// Groups glass shapes so neighbouring cards blend like system glass (macOS 26+).
 struct GlassGroup<Content: View>: View {
+    @AppStorage(Look.glassKey) private var glass = false
     @ViewBuilder var content: Content
     var body: some View {
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, *), glass {
             GlassEffectContainer(spacing: 10) { content }
         } else {
             content
@@ -282,6 +292,7 @@ extension NSWindow {
 struct DashboardToolbar: ToolbarContent {
     @Environment(Monitor.self) private var monitor
     @Environment(\.openWindow) private var openWindow
+    @AppStorage(Look.glassKey) private var glass = false
     let status: PowerStatus
     @Binding var showProcesses: Bool
     @State private var showInfo = false
@@ -331,6 +342,9 @@ struct DashboardToolbar: ToolbarContent {
                     Text("3 秒").tag(3.0)
                 }
                 .pickerStyle(.inline)
+                Divider()
+                Toggle("玻璃效果", isOn: $glass)
+                Text("窗口透出桌面、卡片用液态玻璃。窗口后面有视频或动画时，GPU 要跟着每帧重算，整机功耗会高 1–2 W。")
             } label: {
                 Label("采样间隔", systemImage: "timer")
             }

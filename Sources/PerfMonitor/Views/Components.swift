@@ -39,25 +39,53 @@ struct Card<Content: View, Accessory: View>: View {
 }
 
 extension View {
-    /// Glass buttons on macOS 26+, the default bordered style before that.
-    @ViewBuilder
-    func glassButton() -> some View {
-        if #available(macOS 26.0, *) {
-            buttonStyle(.glass)
+    func glassButton() -> some View { modifier(GlassButton()) }
+
+    func cardBackground(cornerRadius: CGFloat = 16, tint: Color? = nil) -> some View {
+        modifier(CardBackground(cornerRadius: cornerRadius, tint: tint))
+    }
+}
+
+/// Appearance switch. Glass and blurred backgrounds sample what's behind the window, so
+/// anything moving back there (video, a remote desktop) makes WindowServer redo them every
+/// frame: measured at +1.7 W and the GPU clocked up from ~350 to ~620 MHz. Off by default.
+enum Look {
+    static let glassKey = "glassEffects"
+}
+
+/// Glass buttons on macOS 26+ with glass effects on, the bordered style otherwise.
+private struct GlassButton: ViewModifier {
+    @AppStorage(Look.glassKey) private var glass = false
+
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *), glass {
+            content.buttonStyle(.glass)
         } else {
-            buttonStyle(.bordered)
+            content.buttonStyle(.bordered)
         }
     }
+}
 
-    /// Liquid Glass on macOS 26+, frosted material before that.
-    @ViewBuilder
-    func cardBackground(cornerRadius: CGFloat = 16, tint: Color? = nil) -> some View {
-        if #available(macOS 26.0, *) {
-            glassEffect(tint.map { .regular.tint($0.opacity(0.18)) } ?? .regular,
-                        in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+/// Liquid Glass (frosted material before macOS 26) with glass effects on; otherwise a plain
+/// translucent fill that doesn't sample the content behind it.
+private struct CardBackground: ViewModifier {
+    @AppStorage(Look.glassKey) private var glass = false
+    let cornerRadius: CGFloat
+    let tint: Color?
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        if glass {
+            if #available(macOS 26.0, *) {
+                content.glassEffect(tint.map { .regular.tint($0.opacity(0.18)) } ?? .regular, in: shape)
+            } else {
+                content.background(.regularMaterial, in: shape)
+                    .overlay(shape.strokeBorder(.white.opacity(0.08)))
+            }
         } else {
-            background(.regularMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).strokeBorder(.white.opacity(0.08)))
+            content
+                .background((tint ?? .primary).opacity(tint == nil ? 0.05 : 0.12), in: shape)
+                .overlay(shape.strokeBorder(.primary.opacity(0.08)))
         }
     }
 }
