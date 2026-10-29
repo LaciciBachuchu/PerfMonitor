@@ -12,39 +12,37 @@ struct DashboardView: View {
     var body: some View {
         // Our own split instead of .inspector/HSplitView: NSSplitView re-sets the cursor on every
         // display cycle, and with an accessibility-sized pointer that alone cost ~20% CPU.
+        // The view tree stays alive while the window is hidden, covered or put away: it isn't
+        // redrawn then (the dashboard snapshot stops changing), and rebuilding it on every
+        // return cost ~0.5 s of CPU plus a fresh composite in WindowServer.
         GeometryReader { g in
-            if monitor.dashboardActive {
-                let pw = min(max(panelWidth, 380), max(g.size.width - 520, 380))
-                HStack(spacing: 0) {
-                    // Every gap — between cards, around the process panel, at the window edges — is 10 pt.
-                    DashboardContent(status: status, trailingInset: showProcesses ? 0 : 10)
-                        .frame(width: showProcesses ? max(g.size.width - pw - 10, 0) : g.size.width, height: g.size.height)
-                    if showProcesses {
-                        Capsule().fill(.secondary.opacity(hoverDivider ? 0.5 : 0)).frame(width: 3, height: 36)
-                            .frame(width: 10, height: g.size.height)
-                            .contentShape(Rectangle())
-                            .onHover { inside in
-                                hoverDivider = inside
-                                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            let pw = min(max(panelWidth, 380), max(g.size.width - 520, 380))
+            HStack(spacing: 0) {
+                // Every gap — between cards, around the process panel, at the window edges — is 10 pt.
+                DashboardContent(status: status, trailingInset: showProcesses ? 0 : 10)
+                    .frame(width: showProcesses ? max(g.size.width - pw - 10, 0) : g.size.width, height: g.size.height)
+                if showProcesses {
+                    Capsule().fill(.secondary.opacity(hoverDivider ? 0.5 : 0)).frame(width: 3, height: 36)
+                        .frame(width: 10, height: g.size.height)
+                        .contentShape(Rectangle())
+                        .onHover { inside in
+                            hoverDivider = inside
+                            if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                        }
+                        .gesture(DragGesture(minimumDistance: 1)
+                            .onChanged { v in
+                                let start = dragStart ?? pw
+                                dragStart = start
+                                panelWidth = min(max(start - v.translation.width, 380), g.size.width - 520)
                             }
-                            .gesture(DragGesture(minimumDistance: 1)
-                                .onChanged { v in
-                                    let start = dragStart ?? pw
-                                    dragStart = start
-                                    panelWidth = min(max(start - v.translation.width, 380), g.size.width - 520)
-                                }
-                                .onEnded { _ in dragStart = nil })
-                        ProcessPanel()
-                            .padding([.vertical, .trailing], 10)
-                            .frame(width: pw, height: g.size.height)
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
-                    }
+                            .onEnded { _ in dragStart = nil })
+                    ProcessPanel()
+                        .padding([.vertical, .trailing], 10)
+                        .frame(width: pw, height: g.size.height)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
-                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: showProcesses)
-            } else {
-                // Window closed/minimized/covered: drop the whole view tree to free its memory.
-                Color.clear
             }
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: showProcesses)
         }
         .frame(minWidth: 900, minHeight: 520)
         .background(WindowBackdrop().ignoresSafeArea())
@@ -147,14 +145,26 @@ struct FillColumn: Layout {
 
     private func gaps(_ n: Int) -> CGFloat { spacing * CGFloat(max(n - 1, 0)) }
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    /// Children's natural heights for one width, so sizing and placing measure them only once.
+    struct Cache { var width: CGFloat = -1; var heights: [CGFloat] = [] }
+
+    func makeCache(subviews: Subviews) -> Cache { Cache() }
+
+    private func heights(_ subviews: Subviews, width: CGFloat, _ cache: inout Cache) -> [CGFloat] {
+        if cache.width != width || cache.heights.count != subviews.count {
+            cache = Cache(width: width, heights: ideals(subviews, width: width))
+        }
+        return cache.heights
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         let width = proposal.width ?? 800
-        let natural = ideals(subviews, width: width).reduce(0, +) + gaps(subviews.count)
+        let natural = heights(subviews, width: width, &cache).reduce(0, +) + gaps(subviews.count)
         return CGSize(width: width, height: max(natural, minHeight))
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let heights = ideals(subviews, width: bounds.width)
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
+        let heights = heights(subviews, width: bounds.width, &cache)
         let growers = subviews.indices.filter { subviews[$0][Grows.self] }
         let spare = max(0, bounds.height - heights.reduce(0, +) - gaps(subviews.count))
         let extra = growers.isEmpty ? 0 : spare / CGFloat(growers.count)
@@ -215,12 +225,14 @@ struct WindowVisibilityReader: NSViewRepresentable {
             guard let window else { onChange?(false); return }
             // Always come up on the desktop the user is looking at.
             window.collectionBehavior.insert(.moveToActiveSpace)
+            NSWindow.closeOnlyPutsAway(window)
             let report: (Notification) -> Void = { [weak self] n in
                 guard let self, let w = self.window else { return }
                 self.onChange?(n.name != NSWindow.willCloseNotification && Self.isVisible(w))
             }
             for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.willCloseNotification,
-                         NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification] {
+                         NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
+                         NSWindow.didPutAwayNotification, NSWindow.didBecomeKeyNotification] {
                 tokens.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main, using: report))
             }
             // Hiding the whole app (⌘H) doesn't change the window's occlusion state.
@@ -232,6 +244,35 @@ struct WindowVisibilityReader: NSViewRepresentable {
 
         static func isVisible(_ w: NSWindow) -> Bool {
             !NSApp.isHidden && w.isVisible && !w.isMiniaturized && w.occlusionState.contains(.visible)
+        }
+    }
+}
+
+extension NSWindow {
+    private static var putAwayWindows = NSHashTable<NSWindow>.weakObjects()
+    /// Ordering out doesn't reliably post an occlusion change, so putting away says so itself.
+    static let didPutAwayNotification = Notification.Name("PerfMonitorWindowDidPutAway")
+
+    /// The close button, ⌘W and File ▸ Close only order `window` out, so reopening it shows
+    /// it at once instead of rebuilding every view and layer. They all go through
+    /// performClose:, which is swapped once for a version that checks the window.
+    static func closeOnlyPutsAway(_ window: NSWindow) {
+        putAwayWindows.add(window)
+        _ = swizzle
+    }
+
+    private static let swizzle: Void = {
+        guard let original = class_getInstanceMethod(NSWindow.self, #selector(performClose(_:))),
+              let replacement = class_getInstanceMethod(NSWindow.self, #selector(pm_performClose(_:))) else { return }
+        method_exchangeImplementations(original, replacement)
+    }()
+
+    @objc private func pm_performClose(_ sender: Any?) {
+        if Self.putAwayWindows.contains(self) {
+            orderOut(sender)
+            NotificationCenter.default.post(name: Self.didPutAwayNotification, object: self)
+        } else {
+            pm_performClose(sender)   // the original implementation, after the exchange
         }
     }
 }

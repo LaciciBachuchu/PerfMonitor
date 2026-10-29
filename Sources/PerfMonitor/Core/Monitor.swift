@@ -111,13 +111,11 @@ final class Monitor {
     private(set) var allSensors: [SensorReading] = []
     var interval: Double = 2
     @ObservationIgnored private var historyBuffer: [HistoryPoint] = []
-    /// Observed mirror of `dashboardVisible`; the dashboard drops its view tree when false.
-    private(set) var dashboardActive = false
+    /// While false the dashboard snapshot and history stop changing, so the dashboard isn't redrawn.
     @ObservationIgnored var dashboardVisible = false {
         didSet {
             guard dashboardVisible != oldValue else { return }
             if dashboardVisible { dashboard = snapshot; history = historyBuffer }
-            dashboardActive = dashboardVisible
         }
     }
     /// The full sensor list is only scanned while someone is looking at it.

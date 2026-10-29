@@ -49,12 +49,19 @@ final class RollingNumberView: NSView {
         ]]])
         let f = NSFont(descriptor: desc, size: size) ?? base
         font = f
+        widths = [:]
         fontSize = size
         return f
     }
 
+    /// Glyph widths per font size; measuring text on every update showed up in profiles.
+    private var widths: [Character: CGFloat] = [:]
+
     private func width(of c: Character, _ f: NSFont) -> CGFloat {
-        ceil(NSAttributedString(string: String(c), attributes: [.font: f]).size().width)
+        if let w = widths[c] { return w }
+        let w = ceil(NSAttributedString(string: String(c), attributes: [.font: f]).size().width)
+        widths[c] = w
+        return w
     }
 
     func measure(text: String, size: CGFloat) -> CGSize {

@@ -47,11 +47,7 @@ struct TrackingView: View {
                 TextField("应用名、进程名或 PID", text: $target)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit(start)
-                Menu {
-                    ForEach(runningApps, id: \.self) { name in Button(name) { target = name } }
-                } label: { Image(systemName: "list.bullet") }
-                .menuStyle(.button).fixedSize()
-                .help("从正在运行的应用中选择")
+                RunningAppsMenu(target: $target)
             }
             HStack(spacing: 6) {
                 Picker("时长", selection: $minutes) {
@@ -69,11 +65,6 @@ struct TrackingView: View {
         }
         .padding(12)
         .cardBackground()
-    }
-
-    private var runningApps: [String] {
-        let apps = monitor.snapshot.apps.filter(\.hasWindow)
-        return Array(Set(apps.map(\.name))).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 
     private func start() {
@@ -103,6 +94,23 @@ struct TrackingView: View {
         }
         .frame(maxHeight: .infinity)
         .cardBackground()
+    }
+}
+
+/// Its own view: it reads the live snapshot, which changes every tick, and would otherwise
+/// redraw the whole tracking window with it.
+private struct RunningAppsMenu: View {
+    @Environment(Monitor.self) private var monitor
+    @Binding var target: String
+
+    var body: some View {
+        let apps = monitor.snapshot.apps.filter(\.hasWindow)
+        let names = Array(Set(apps.map(\.name))).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        Menu {
+            ForEach(names, id: \.self) { name in Button(name) { target = name } }
+        } label: { Image(systemName: "list.bullet") }
+        .menuStyle(.button).fixedSize()
+        .help("从正在运行的应用中选择")
     }
 }
 
